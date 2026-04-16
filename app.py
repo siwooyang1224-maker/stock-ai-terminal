@@ -226,7 +226,7 @@ with tab3:
         try:
             # 변경됨: 최신 Client 문법 적용 및 모델 고정
             res = gemini_client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-2.5-flash', # <--- 이 부분이 수정되었습니다!
                 contents=f"투자 전략가로서 다음 시장 상황을 분석하고 비전공자도 이해할 수 있게 3줄로 요약해줘: {market_news}"
             )
             st.success(res.text)
