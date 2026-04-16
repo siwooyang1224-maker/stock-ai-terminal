@@ -68,7 +68,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. 정밀 퀀트 엔진 (IB Best Practice Multi-Factor Model) ---
+# --- 3. 정밀 퀀트 엔진 ---
 @st.cache_data(ttl=300)
 def analyze_stock_quant(ticker):
     try:
@@ -89,8 +89,11 @@ def analyze_stock_quant(ticker):
         mfi = ta.volume.money_flow_index(df['High'], df['Low'], df['Close'], df['Volume']).iloc[-1]
         atr = ta.volatility.average_true_range(df['High'], df['Low'], df['Close']).iloc[-1]
         
+        # ATR을 현재 주가 대비 비율(%)로 변환 (리스크 체감용)
+        atr_pct = (atr / curr_price) * 100 if curr_price != 0 else 0
+        
         # --- IB Best Practice Scoring (0~100) ---
-        score = 50.0 # 시작 기준선
+        score = 50.0 
         
         # 1. Trend & Momentum (MACD + ADX)
         if m_val > s_val:
@@ -135,7 +138,7 @@ def analyze_stock_quant(ticker):
             
         return {
             "Ticker": ticker, "Price": curr_price, "RSI": round(rsi, 2), "MACD_Status": "Bullish Cross" if m_val > s_val else "Bearish Cross",
-            "BB_Pos": round(bb_pos, 1), "ADX": round(adx, 1), "MFI": round(mfi, 1), "ATR": round(atr, 2),
+            "BB_Pos": round(bb_pos, 1), "ADX": round(adx, 1), "MFI": round(mfi, 1), "ATR": round(atr, 2), "ATR_Pct": round(atr_pct, 2),
             "Verdict": verdict, "Conf_Str": conf_str, "Conf_Val": conf_val, "Conf_Bg": conf_bg, "Score": final_score, "Color": color, "df": df
         }
     except: return None
@@ -165,13 +168,40 @@ with tab1:
         data = analyze_stock_quant(tk)
         if data:
             with p_cols[i % 2]:
-                rsi_msg = f"RSI(심리 강도)가 {data['RSI']}입니다. 현재 {'과열권으로 단기 차익매물 출회 가능성' if data['RSI'] > 65 else '침체권으로 저가 매수세 유입 가능성' if data['RSI'] < 35 else '시장 심리가 안정된 중립 구간'}입니다."
-                macd_msg = f"MACD 추세가 {data['MACD_Status']}입니다. 단기 이동평균이 장기 이동평균을 {'상향 돌파하여 상승 랠리' if 'Bullish' in data['MACD_Status'] else '하향 이탈하여 하락 압력'}가 형성 중입니다."
-                bb_msg = f"BB(가격 편차 위치)가 {data['BB_Pos']}%입니다. 가격이 통계적 밴드의 {'상단을 뚫어 단기 조정이 예상됨' if data['BB_Pos'] > 85 else '하단에 닿아 기술적 반등이 기대됨' if data['BB_Pos'] < 15 else '정상 범위 안에서 움직임'}을 시사합니다."
-                adx_msg = f"ADX(추세 강도)가 {data['ADX']}입니다. 25를 넘으면 추세가 강함을 뜻하며, 현재 {'명확한 방향성을 가지고 뻗어나가는 중' if data['ADX'] > 25 else '방향성이 뚜렷하지 않은 횡보장세'}입니다."
-                mfi_msg = f"MFI(자금 유입)가 {data['MFI']}입니다. 거래량이 실린 스마트 머니가 {'강하게 유입되고 있어 추세 신뢰도가 높음' if data['MFI'] > 60 else '점차 빠져나가고 있어 보수적 접근 필요' if data['MFI'] < 40 else '균형을 이루고 있음'}을 의미합니다."
-                # ATR 설명 문장 추가
-                atr_msg = f"ATR(변동성 지수)가 {data['ATR']:.2f}입니다. 이는 최근 일일 평균 가격 변동폭을 의미하며, 해당 수치를 바탕으로 타이트한 손절선과 목표가를 설정하여 리스크를 관리해야 합니다."
+                
+                # --- 동적이고 촘촘한 코멘트 생성 로직 ---
+                
+                # 1. RSI (5단계 세분화)
+                rsi = data['RSI']
+                if rsi >= 70: rsi_msg = f"RSI가 {rsi}로 **과열권(Overbought)**입니다. 단기 고점 징후가 있으니 신규 진입은 보수적으로 접근해야 합니다."
+                elif rsi >= 60: rsi_msg = f"RSI가 {rsi}로 **강세 심리**가 유지 중입니다. 우상향 랠리를 이어갈 추가 동력이 남아있습니다."
+                elif rsi <= 30: rsi_msg = f"RSI가 {rsi}로 **극단적 과매도(Oversold)**입니다. 투매가 진정되면 기술적 반등(Dead Cat Bounce)을 노릴 만합니다."
+                elif rsi <= 45: rsi_msg = f"RSI가 {rsi}로 **약세 심리**가 지배적입니다. 아직 하방 지지선이 완전히 확인되지 않았습니다."
+                else: rsi_msg = f"RSI가 {rsi}로 **팽팽한 중립** 상태입니다. 뚜렷한 매수/매도 우위가 없는 눈치싸움 구간입니다."
+                
+                # 2. MACD & BB
+                macd_msg = f"MACD가 **{data['MACD_Status']}**입니다. 단기 이평선이 장기 이평선을 {'상향 돌파하여 **상승 모멘텀**이 작동 중' if 'Bullish' in data['MACD_Status'] else '하향 이탈하여 **하락 압력**이 작동 중'}입니다."
+                bb_msg = f"BB 위치는 **{data['BB_Pos']}%**입니다. 통계적 밴드의 {'상단을 뚫어 평균 회귀(조정)가 우려됨' if data['BB_Pos'] > 85 else '하단에 닿아 기술적 반등이 기대됨' if data['BB_Pos'] < 15 else '중심부에서 정상적인 변동성 내에 머무르고 있음'}을 시사합니다."
+                
+                # 3. MFI & ADX
+                adx = data['ADX']
+                mfi = data['MFI']
+                adx_msg = f"ADX(추세 강도)는 **{adx}**입니다. {'현재 방향(상승이든 하락이든)으로 **매우 강한 추세**를 형성 중' if adx > 25 else '**뚜렷한 방향성이 없는 횡보장**으로 박스권 매매가 유효'}합니다."
+                
+                if mfi >= 70: mfi_msg = f"MFI(자금 유입)는 **{mfi}**입니다. 스마트 머니(거대 자금)가 **공격적으로 유입**되고 있어 상승 신뢰도가 높습니다."
+                elif mfi >= 55: mfi_msg = f"MFI는 **{mfi}**로 매수 자금이 **점진적으로 유입**되며 수급을 받쳐주고 있습니다."
+                elif mfi <= 30: mfi_msg = f"MFI는 **{mfi}**로 자금이 **빠르게 유출**되고 있습니다. 추세 붕괴 리스크를 관리해야 합니다."
+                elif mfi <= 45: mfi_msg = f"MFI는 **{mfi}**로 자금 유입이 **저조한 편**입니다. 가짜 반등에 속지 않도록 유의하세요."
+                else: mfi_msg = f"MFI는 **{mfi}**로 자금의 유입과 유출이 **균형**을 이루고 있습니다."
+
+                # 4. ATR (비율 기반 리스크 평가 - 핵심 수정 사항)
+                atr_pct = data['ATR_Pct']
+                if atr_pct >= 5.0:
+                    atr_msg = f"ATR(변동성)은 {data['ATR']:.2f}로 주가의 **{atr_pct}%**에 달하는 **[고변동성 종목]**입니다. 하루에도 위아래 흔들림이 커 타이트한 손절매 등 철저한 리스크 관리가 필수적입니다."
+                elif atr_pct >= 2.0:
+                    atr_msg = f"ATR(변동성)은 {data['ATR']:.2f}로 주가의 **{atr_pct}%** 수준입니다. 일반적인 주식의 **[정상 변동폭]** 내에서 무난하게 움직이고 있습니다."
+                else:
+                    atr_msg = f"ATR(변동성)은 {data['ATR']:.2f}로 주가의 **{atr_pct}%** 불과한 **[저변동성/방어주]** 성향을 보입니다. 움직임이 무거워 단기 트레이딩보다는 중장기 관점이 어울립니다."
 
                 st.markdown(f"""
                 <div class="ib-card">
@@ -187,10 +217,10 @@ with tab1:
                         <tr><td style="color:#8E8E93;">BB Pos (가격 편차 위치)</td><td style="text-align:right;">{data['BB_Pos']}%</td></tr>
                         <tr style="border-top: 2px dashed #F1F3F5;"><td style="color:#8E8E93; font-weight:600;">ADX (추세 강도)</td><td style="text-align:right; font-weight:600; color:{'#D71920' if data['ADX'] > 25 else '#1C1C1E'};">{data['ADX']}</td></tr>
                         <tr><td style="color:#8E8E93; font-weight:600;">MFI (자금 유입 효율)</td><td style="text-align:right; font-weight:600;">{data['MFI']}</td></tr>
-                        <tr><td style="color:#8E8E93;">ATR (변동성 지수)</td><td style="text-align:right;">{data['ATR']:.2f}</td></tr>
+                        <tr><td style="color:#8E8E93;">ATR (변동성 비율)</td><td style="text-align:right; font-weight:600;">{data['ATR_Pct']}% (절대값: {data['ATR']:.2f})</td></tr>
                     </table>
-                    <div style="margin-top: 20px; font-size: 13px; color: #495057; line-height: 1.7; background: #F8F9FA; padding: 15px; border-radius: 6px;">
-                        <b>📉 퀀트 팩터 분석 요약:</b><br>
+                    <div style="margin-top: 20px; font-size: 13.5px; color: #3A3A3C; line-height: 1.75; background: #F8F9FA; padding: 18px; border-radius: 8px;">
+                        <b>📉 퀀트 팩터 상세 분석:</b><br>
                         • {rsi_msg}<br>
                         • {macd_msg}<br>
                         • {bb_msg}<br>
@@ -233,10 +263,10 @@ with tab1:
                     del st.session_state.my_portfolio[name]
                     st.rerun()
 
-# [탭 2: 유니버스 스크리닝 - 모든 지표 출력]
+# [탭 2: 유니버스 스크리닝]
 with tab2:
     st.markdown("### Global Universe Screening (100 Assets Summary)")
-    st.info("💡 스크리닝 점수(Quant Score)는 RSI, MACD, BB, ADX, MFI 데이터를 모두 합산하여 산출됩니다.")
+    st.info("💡 스크리닝 점수(Quant Score)는 MACD, BB, RSI, ADX, MFI 팩터를 모두 합산한 멀티 팩터 모델 결과입니다.")
     
     def get_screen_data(stocks):
         res = []
@@ -245,7 +275,7 @@ with tab2:
             if d: res.append({
                 "Asset (종목)": n, "Ticker": t, "Score (퀀트점수)": d['Score'], 
                 "Verdict (의견)": d['Verdict'], "RSI": d['RSI'], "MACD": d['MACD_Status'], 
-                "BB(%)": d['BB_Pos'], "ADX": d['ADX'], "MFI": d['MFI'], "ATR": d['ATR']
+                "BB(%)": d['BB_Pos'], "ADX": d['ADX'], "MFI": d['MFI'], "ATR(%)": d['ATR_Pct']
             })
         return pd.DataFrame(res)
 
