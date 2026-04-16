@@ -7,7 +7,7 @@ import numpy as np
 import ta
 from google import genai
 import time
-from streamlit_autorefresh import st_autorefresh # 자동 새로고침 라이브러리
+from streamlit_autorefresh import st_autorefresh
 
 # --- 0. Gemini AI 보안 설정 ---
 if "GEMINI_API_KEY" in st.secrets:
@@ -45,22 +45,19 @@ US_STOCKS = {
 
 # --- 2. Bloomberg/IB 스타일 CSS ---
 st.set_page_config(page_title="Alpha Terminal IB", layout="wide")
-
-# 5분(300초)마다 자동으로 페이지를 리프레시합니다.
-st_autorefresh(interval=300000, key="datarefresh")
+st_autorefresh(interval=300000, key="datarefresh") # 5분 자동 새로고침
 
 st.markdown("""
 <style>
     @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
     * {font-family: '-apple-system', 'BlinkMacSystemFont', 'Pretendard', sans-serif !important;}
     .stApp {background-color: #F8F9FA;}
-    
     .ib-card {
         background-color: #FFFFFF;
         border-radius: 8px;
         padding: 24px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-        border-top: 5px solid #00529B;
+        border-top: 5px solid #D71920; /* Aggressive Red 포인트 */
         margin-bottom: 25px;
     }
     .decision-label { font-size: 13px; font-weight: 700; color: #8E8E93; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -70,164 +67,157 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. 정밀 퀀트 엔진 (nan 방지 로직 강화) ---
-@st.cache_data(ttl=300) # 자동 새로고침 주기에 맞춰 캐시 수명 조정
-def analyze_stock_quant(ticker):
+# --- 3. 공격적 투자용 퀀트 분석 엔진 ---
+@st.cache_data(ttl=300)
+def analyze_stock_aggressive(ticker):
     try:
-        # 데이터 호출 시 결측치 행을 즉시 드랍하여 nan 발생 차단
         df = yf.download(ticker, period="1y", progress=False).dropna()
         if df.empty or len(df) < 50: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
         
-        bb = ta.volatility.BollingerBands(df['Close'])
+        # 지표 산출
         rsi = ta.momentum.rsi(df['Close']).iloc[-1]
+        mfi = ta.volume.money_flow_index(df['High'], df['Low'], df['Close'], df['Volume']).iloc[-1]
+        adx = ta.trend.adx(df['High'], df['Low'], df['Close']).iloc[-1]
         macd = ta.trend.MACD(df['Close'])
         m_val, s_val = macd.macd().iloc[-1], macd.macd_signal().iloc[-1]
-        
-        curr_price = df['Close'].iloc[-1]
-        bb_h, bb_l = bb.bollinger_hband().iloc[-1], bb.bollinger_lband().iloc[-1]
-        
-        # 분모 0 체크 및 가격 편차 계산
-        bb_pos = (curr_price - bb_l) / (bb_h - bb_l) * 100 if (bb_h - bb_l) != 0 else 50.0
-        
-        # Decision Logic (매수/매도 방향성 먼저 확정)
+        bb = ta.volatility.BollingerBands(df['Close'])
+        bb_pos = (df['Close'].iloc[-1] - bb.bollinger_lband().iloc[-1]) / (bb.bollinger_hband().iloc[-1] - bb.bollinger_lband().iloc[-1]) * 100
+        atr = ta.volatility.average_true_range(df['High'], df['Low'], df['Close']).iloc[-1]
+
+        # --- 공격적 투자자용 가중치 스코어링 (Aggressive Strategy) ---
         score = 50.0
-        if rsi < 35: score += 20
-        elif rsi > 65: score -= 20
-        if m_val > s_val: score += 15
-        else: score -= 15
-        if bb_pos < 20: score += 15
-        elif bb_pos > 80: score -= 15
-        
-        # 10단위 확신도(Confidence) 계산
-        if score > 52:
-            verdict, confidence = "BUY (매수 권장)", int((score - 50) * 2.5 // 10 * 10)
-            color = "#00873C"
-        elif score < 48:
-            verdict, confidence = "SELL (매도 권장)", int((50 - score) * 2.5 // 10 * 10)
-            color = "#FF3B30"
-        else:
-            verdict, confidence = "HOLD (중립 관망)", 50
-            color = "#8E8E93"
+        # 1. 추세 강도(ADX) 및 모멘텀(MACD): 60% 가중
+        if adx > 25: # 추세 형성
+            score += 15
+            if m_val > s_val: score += 15 # 상승 모멘텀 일치
+        else: # 횡보장
+            score -= 10
             
+        # 2. 자금 유입(MFI): 20% 가중
+        if mfi > 60: score += 10
+        elif mfi < 40: score -= 10
+        
+        # 3. 상대적 위치 및 강도(RSI/BB): 20% 가중
+        if rsi > 70: score += 5 # 성장주는 과열권에서도 더 감 (돌파 매매)
+        elif rsi < 30: score -= 5 # 하락 추세 성장주는 배제
+        
+        final_score = int(max(0, min(100, score)))
+        
+        # 방향성 및 확신도 판정
+        if final_score >= 70:
+            decision, color = "AGGRESSIVE BUY (공격적 매수)", "#D71920"
+            confidence = int((final_score - 50) * 2)
+        elif final_score >= 50:
+            decision, color = "WATCH & ACCUMULATE (추세 관찰)", "#FF9500"
+            confidence = int((final_score - 50) * 2 + 30)
+        else:
+            decision, color = "RISK OFF (적극 대피)", "#8E8E93"
+            confidence = int((50 - final_score) * 2)
+
         return {
-            "Ticker": ticker, "Price": curr_price, "RSI": round(rsi, 2),
-            "MACD_Status": "Bullish Cross (상승 돌파)" if m_val > s_val else "Bearish Cross (하락 돌파)",
-            "BB_Pos": round(bb_pos, 1), "Verdict": verdict, "Confidence": min(100, confidence), "Color": color, "df": df
+            "Ticker": ticker, "Price": df['Close'].iloc[-1], "RSI": round(rsi, 2),
+            "MFI": round(mfi, 1), "ADX": round(adx, 1), "ATR": round(atr, 2),
+            "Verdict": decision, "Confidence": min(100, confidence), "Color": color, "df": df, "MACD": macd, "BB": bb
         }
-    except: return None
+    except Exception as e:
+        return None
 
 # --- 4. 대시보드 메인 ---
-st.markdown("<h2 style='text-align: left; color: #1C1C1E; font-weight: 900; letter-spacing: -1px;'>ALPHA TERMINAL <span style='color:#00529B;'>QUANT-INSIGHT</span></h2>", unsafe_allow_html=True)
+st.markdown("<h2 style='text-align: left; color: #1C1C1E; font-weight: 900; letter-spacing: -1px;'>ALPHA TERMINAL <span style='color:#D71920;'>AGGRESSIVE-QUANT</span></h2>", unsafe_allow_html=True)
 
 if 'my_portfolio' not in st.session_state:
-    st.session_state.my_portfolio = {"SK하이닉스": "000660.KS", "IonQ": "IONQ"}
+    st.session_state.my_portfolio = {"SK하이닉스": "000660.KS", "NVIDIA": "NVDA"}
 
-tab1, tab2, tab3 = st.tabs(["[1] ASSET STRATEGY (자산 전략)", "[2] UNIVERSE SCREENING (전수 조사)", "[3] RESEARCH (리서치)"])
+tab1, tab2, tab3 = st.tabs(["[1] GROWTH STRATEGY (성장주 전략)", "[2] UNIVERSE SCAN (전수 조사)", "[3] RISK RESEARCH (리스크 연구)"])
 
-# [탭 1: 자산 전략]
+# [탭 1: 공격적 자산 전략]
 with tab1:
-    col_reg1, col_reg2, col_reg3 = st.columns([2, 2, 1])
-    n_name = col_reg1.text_input("Asset Name (종목명)", placeholder="ex) 삼성전자")
-    n_ticker = col_reg2.text_input("Ticker Symbol (티커)", placeholder="ex) 005930.KS")
-    if col_reg3.button("Register Asset (등록)"):
+    col_in1, col_in2, col_in3 = st.columns([2, 2, 1])
+    n_name = col_in1.text_input("Growth Asset Name", placeholder="ex) 엔비디아")
+    n_ticker = col_in2.text_input("Ticker Symbol", placeholder="ex) NVDA")
+    if col_in3.button("Deploy Analysis"):
         if n_name and n_ticker:
             st.session_state.my_portfolio[n_name] = n_ticker
             st.rerun()
 
-    st.markdown("---")
-    
     p_cols = st.columns(2)
     for i, (name, tk) in enumerate(st.session_state.my_portfolio.items()):
-        data = analyze_stock_quant(tk)
+        data = analyze_stock_aggressive(tk)
         if data:
             with p_cols[i % 2]:
-                # 문장형 피드백 생성
-                rsi_msg = f"RSI(심리 강도)가 {data['RSI']}입니다. 이는 현재 시장 참여자들의 심리가 {'과열권에 진입하여 단기 조정 가능성이 높음' if data['RSI'] > 65 else '공포 구간에 위치하여 기술적 반등 확률이 높아짐' if data['RSI'] < 35 else '안정적인 중립 상태를 유지하고 있음'}을 의미합니다."
-                macd_msg = f"MACD 모멘텀이 {data['MACD_Status']} 상태입니다. 현재 주가의 상승 동력이 {'확대되며 추세가 강화되고 있음' if 'Bullish' in data['MACD_Status'] else '둔화되며 하방 압력이 점증하고 있음'}을 의미합니다."
-                bb_msg = f"BB(가격 편차 위치)가 {data['BB_Pos']}%입니다. 가격이 {'통계적 변동 범위 상단에 이격되어 평균 회귀가 예상됨' if data['BB_Pos'] > 85 else '통계적 변동 범위 하단에 도달하여 하방 지지력이 확인됨' if data['BB_Pos'] < 15 else '박스권 내에서 정상적인 가격 경로를 형성 중임'}을 의미합니다."
-
                 st.markdown(f"""
                 <div class="ib-card">
-                    <div class="decision-label">{name} ({tk}) / Intelligence Report</div>
+                    <div class="decision-label">{name} ({tk}) / Aggressive Decision Core</div>
                     <div class="decision-value" style="color: {data['Color']};">{data['Verdict']} (확신도: {data['Confidence']}%)</div>
                     <table class="data-table">
-                        <tr><td>Current Price (현재 주가)</td><td style="text-align:right; font-weight:700;">{data['Price']:,.2f}</td></tr>
-                        <tr><td>RSI (심리 강도)</td><td style="text-align:right;">{data['RSI']}</td></tr>
-                        <tr><td>MACD Momentum (추세 모멘텀)</td><td style="text-align:right;">{data['MACD_Status']}</td></tr>
-                        <tr><td>BB Standard Dev. Pos (가격 편차 위치)</td><td style="text-align:right;">{data['BB_Pos']}%</td></tr>
+                        <tr><td>Current Price (현재가)</td><td style="text-align:right; font-weight:700;">{data['Price']:,.2f}</td></tr>
+                        <tr><td>ADX (추세 강도)</td><td style="text-align:right; color:{'#D71920' if data['ADX'] > 25 else '#8E8E93'};">{data['ADX']} ({'추세 형성' if data['ADX'] > 25 else '횡보/약세'})</td></tr>
+                        <tr><td>MFI (자금 유입 효율)</td><td style="text-align:right;">{data['MFI']} (Smart Money Flow)</td></tr>
+                        <tr><td>ATR (변동성 지수)</td><td style="text-align:right;">{data['ATR']} (Expected Range)</td></tr>
                     </table>
-                    <div style="margin-top: 20px; font-size: 13px; color: #495057; line-height: 1.7; background: #F8F9FA; padding: 15px; border-radius: 6px;">
-                        <b>📉 Logic-Based Insight (논리적 분석):</b><br>
-                        • {rsi_msg}<br>
-                        • {macd_msg}<br>
-                        • {bb_msg}
+                    <div style="margin-top: 15px; font-size: 13px; color: #495057; line-height: 1.6; background: #FFF5F5; padding: 15px; border-radius: 6px;">
+                        <b>🔥 Aggressive Insight (공격적 분석):</b><br>
+                        • {name}의 ADX는 {data['ADX']}로, 현재 {'강력한 추세 구간에 진입하여 추가 랠리 가능성이 높음' if data['ADX'] > 25 else '추세적 에너지가 부족하여 기간 조정이 예상됨'}을 시사합니다.<br>
+                        • MFI 수치가 {data['MFI']}인 것으로 보아, 현재 가격 상승 시 {'대규모 자금이 동반 유입되는 고효율 구간' if data['MFI'] > 60 else '수급 뒷받침이 약한 기술적 반등 구간'}으로 판단됩니다.
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # 차트 출력 (범례 명확화)
-                df_chart = data['df'][-120:]
+                # 차트 출력 (3단 구성)
+                df_c = data['df'][-120:]
                 fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_heights=[0.5, 0.25, 0.25])
+                fig.add_trace(go.Candlestick(x=df_c.index, open=df_c['Open'], high=df_c['High'], low=df_c['Low'], close=df_c['Close'], name="Price"), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_c.index, y=data['BB'].bollinger_hband()[-120:], line=dict(color='rgba(215,25,32,0.2)', width=1), name="BB Upper"), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_c.index, y=data['BB'].bollinger_lband()[-120:], line=dict(color='rgba(215,25,32,0.2)', width=1), fill='tonexty', name="BB Lower"), row=1, col=1)
                 
-                fig.add_trace(go.Candlestick(x=df_chart.index, open=df_chart['Open'], high=df_chart['High'], low=df_chart['Low'], close=df_chart['Close'], name="Price (주가)"), row=1, col=1)
-                bb_ta = ta.volatility.BollingerBands(df_chart['Close'])
-                fig.add_trace(go.Scatter(x=df_chart.index, y=bb_ta.bollinger_hband(), line=dict(color='rgba(0,82,155,0.4)', width=1), name="BB Upper (상단선)"), row=1, col=1)
-                fig.add_trace(go.Scatter(x=df_chart.index, y=bb_ta.bollinger_lband(), line=dict(color='rgba(0,82,155,0.4)', width=1), fill='tonexty', name="BB Lower (하단선)"), row=1, col=1)
+                # MFI 차트 (RSI 대신 자금유입 강조)
+                mfi_c = ta.volume.money_flow_index(df_c['High'], df_c['Low'], df_c['Close'], df_c['Volume'])
+                fig.add_trace(go.Scatter(x=df_c.index, y=mfi_c, line=dict(color='#D71920', width=1.5), name="MFI (자금유입)"), row=2, col=1)
+                fig.add_hline(y=80, line_dash="dot", line_color="#D71920", row=2, col=1)
+                fig.add_hline(y=20, line_dash="dot", line_color="#34C759", row=2, col=1)
                 
-                macd_ta = ta.trend.MACD(df_chart['Close'])
-                fig.add_trace(go.Scatter(x=df_chart.index, y=macd_ta.macd(), line=dict(color='#00529B', width=1.5), name="MACD Line (추세선)"), row=2, col=1)
-                fig.add_trace(go.Scatter(x=df_chart.index, y=macd_ta.macd_signal(), line=dict(color='#FF9500', width=1), name="Signal Line (신호선)"), row=2, col=1)
-                fig.add_trace(go.Bar(x=df_chart.index, y=macd_ta.macd_diff(), marker_color='#DEE2E6', name="Histogram (강도)"), row=2, col=1)
-                
-                rsi_ta = ta.momentum.rsi(df_chart['Close'])
-                fig.add_trace(go.Scatter(x=df_chart.index, y=rsi_ta, line=dict(color='#AF52DE', width=1.5), name="RSI (심리 강도)"), row=3, col=1)
-                fig.add_hline(y=70, line_dash="dot", line_color="#FF3B30", row=3, col=1)
-                fig.add_hline(y=30, line_dash="dot", line_color="#34C759", row=3, col=1)
-                
+                # ADX 차트 (추세 강도 강조)
+                adx_c = ta.trend.adx(df_c['High'], df_c['Low'], df_c['Close'])[-120:]
+                fig.add_trace(go.Scatter(x=df_c.index, y=adx_c, line=dict(color='#00529B', width=1.5), name="ADX (추세강도)"), row=3, col=1)
+                fig.add_hline(y=25, line_dash="dot", line_color="orange", row=3, col=1)
+
                 fig.update_layout(height=650, template="plotly_white", margin=dict(l=0,r=0,t=0,b=0), xaxis_rangeslider_visible=False, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                 st.plotly_chart(fig, use_container_width=True)
                 
-                if st.button(f"Close Asset {name}", key=f"del_{tk}"):
+                if st.button(f"Purge Asset {name}", key=f"del_{tk}"):
                     del st.session_state.my_portfolio[name]
                     st.rerun()
 
-# [탭 2: 유니버스 스크리닝 - 게이지 형식]
+# [탭 2: 유니버스 게이지 스캐너]
 with tab2:
-    st.markdown("### Global Universe Screening (100 Assets Summary)")
-    
-    def get_screen_data(stocks):
+    st.markdown("### High-Growth Universe Screening (Top 100)")
+    def get_growth_df(stocks):
         res = []
         for t, n in stocks.items():
-            d = analyze_stock_quant(t)
+            d = analyze_stock_aggressive(t)
             if d: res.append({
-                "Asset (종목)": n, "Ticker (티커)": t, "Confidence (확신도)": d['Confidence'], 
-                "Verdict (의견)": d['Verdict'], "RSI (심리강도)": d['RSI']
+                "Asset": n, "Ticker": t, "Conf. (%)": d['Confidence'], "Verdict": d['Verdict'], "ADX (Trend)": d['ADX'], "MFI (Money)": d['MFI']
             })
         return pd.DataFrame(res)
 
     c1, c2 = st.columns(2)
-    column_cfg = {
-        "Confidence (확신도)": st.column_config.ProgressColumn(
-            "Confidence Level (%)", min_value=0, max_value=100, format="%d"
-        )
-    }
-
+    cfg = {"Conf. (%)": st.column_config.ProgressColumn("Growth Conviction", min_value=0, max_value=100)}
     with c1:
-        st.markdown("🇰🇷 **KOSPI & KOSDAQ Top 50**")
-        st.dataframe(get_screen_data(KR_STOCKS), use_container_width=True, hide_index=True, column_config=column_cfg)
+        st.markdown("🇰🇷 **K-Growth 50**")
+        st.dataframe(get_growth_df(KR_STOCKS), use_container_width=True, hide_index=True, column_config=cfg)
     with c2:
-        st.markdown("🇺🇸 **S&P 500 & NASDAQ Top 50**")
-        st.dataframe(get_screen_data(US_STOCKS), use_container_width=True, hide_index=True, column_config=column_cfg)
+        st.markdown("🇺🇸 **U.S. Growth 50**")
+        st.dataframe(get_growth_df(US_STOCKS), use_container_width=True, hide_index=True, column_config=cfg)
 
-# [탭 3: 리서치 리포트]
+# [탭 3: 공격적 리서치]
 with tab3:
-    st.markdown("### Institutional Alpha Research (전문가 전략 보고)")
+    st.markdown("### Senior Growth Strategist Report")
     if gemini_client:
-        if st.button("Generate Senior Analyst Briefing (리포트 생성)"):
-            with st.spinner("Accessing Terminal Meta-Data..."):
-                prompt = "당신은 월스트리트의 시니어 애널리스트입니다. 현재 마켓의 주요 기술적 지표들을 기반으로, 연세대 경영/공학 대학생 수준에서 논리적으로 납득 가능한 투자 대응 전략 5줄을 마크다운 형식으로 작성하세요."
+        if st.button("Generate Alpha Strategy"):
+            with st.spinner("Compiling High-Growth Intelligence..."):
+                prompt = "당신은 월스트리트의 성장주 전문 전략가입니다. 현재 금리 환경과 기술주 섹터의 ADX/MFI 데이터를 기반으로, 공격적 투자자가 주목해야 할 5줄 이내의 핵심 전술 리포트를 작성하세요."
                 try:
                     res = gemini_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-                    st.markdown(f"<div style='background-color: #FFFFFF; padding: 25px; border-left: 5px solid #00529B; line-height: 1.8; box-shadow: 0 2px 5px rgba(0,0,0,0.05);'>{res.text}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='background-color: #FFF5F5; padding: 25px; border-left: 5px solid #D71920; line-height: 1.8;'>{res.text}</div>", unsafe_allow_html=True)
                 except Exception as e: st.error(f"Error: {e}")
