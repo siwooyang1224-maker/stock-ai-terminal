@@ -49,7 +49,7 @@ st.markdown("""
 
 # --- 2. 직관적인 AI 해설 생성 함수 ---
 def get_easy_explanation(rsi, macd_trend, bb_val, verdict):
-    rsi_text = "사람들이 공포에 질려 다 팔아버렸어요! (바닥권 진입 가능성)" if rsi <= 35 else "너도나도 사겠다고 몰려들어 거품이 조금 꼈습니다." if rsi >= 70 else "사는 사람과 파는 사람이 팽팽하게 눈치를 보고 있습니다."
+    rsi_text = "사람들이 공포에 질려 다 팔아버렸어요! (바닥권 진입 가능성)" if rsi <= 35 else "너도나도 사겠다고 몰려들어 거품이 조금 꼈습니다." if rsi >= 70 else "사는 사람과 파는 평행하게 눈치를 보고 있습니다."
     macd_text = "주가가 위로 올라가려는 '순풍'을 탔습니다." if macd_trend == "상승" else "지금은 주가가 아래로 밀리는 '역풍'이 불고 있네요."
     bb_text = "평소 놀던 가격대의 맨 밑바닥까지 떨어졌어요. 튀어 오를 자리를 찾고 있습니다." if bb_val <= 10 else "평소 가격대의 지붕을 뚫고 나갔습니다. 다시 내려올 확률이 높아요." if bb_val >= 90 else "평소 움직이는 정상적인 가격대 안에서 얌전히 움직이고 있습니다."
     
@@ -226,9 +226,9 @@ with tab3:
                 
                 for attempt in range(max_retries):
                     try:
-                        # 수정됨: 최신 3세대 모델 적용
+                        # 다시 2.5 버전으로 복구 완료
                         res = gemini_client.models.generate_content(
-                            model='gemini-3-flash', 
+                            model='gemini-2.5-flash', 
                             contents=f"투자 전략가로서 다음 시장 상황을 분석하고 비전공자도 이해할 수 있게 3줄로 요약해줘: {market_news}"
                         )
                         st.success(res.text)
