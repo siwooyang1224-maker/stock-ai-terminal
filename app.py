@@ -60,6 +60,14 @@ st.markdown("""
         border-top: 5px solid #00529B;
         margin-bottom: 25px;
     }
+    .macro-card {
+        background-color: #FFFFFF;
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        border-left: 5px solid #D71920;
+        margin-bottom: 20px;
+    }
     .decision-label { font-size: 13px; font-weight: 700; color: #8E8E93; text-transform: uppercase; letter-spacing: 0.5px; }
     .decision-value { font-size: 26px; font-weight: 900; margin: 10px 0; display: flex; align-items: baseline; gap: 8px; }
     .decision-prob { font-size: 15px; font-weight: 600; padding: 4px 10px; border-radius: 6px; }
@@ -76,7 +84,6 @@ def analyze_stock_quant(ticker):
         if df.empty or len(df) < 50: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
         
-        # 지표 산출
         bb = ta.volatility.BollingerBands(df['Close'])
         rsi = ta.momentum.rsi(df['Close']).iloc[-1]
         macd = ta.trend.MACD(df['Close'])
@@ -88,14 +95,9 @@ def analyze_stock_quant(ticker):
         adx = ta.trend.adx(df['High'], df['Low'], df['Close']).iloc[-1]
         mfi = ta.volume.money_flow_index(df['High'], df['Low'], df['Close'], df['Volume']).iloc[-1]
         atr = ta.volatility.average_true_range(df['High'], df['Low'], df['Close']).iloc[-1]
-        
-        # ATR을 현재 주가 대비 비율(%)로 변환 (리스크 체감용)
         atr_pct = (atr / curr_price) * 100 if curr_price != 0 else 0
         
-        # --- IB Best Practice Scoring (0~100) ---
         score = 50.0 
-        
-        # 1. Trend & Momentum (MACD + ADX)
         if m_val > s_val:
             score += 15
             if adx > 25: score += 15
@@ -103,13 +105,11 @@ def analyze_stock_quant(ticker):
             score -= 15
             if adx > 25: score -= 15
             
-        # 2. Smart Money Flow (MFI)
         if mfi > 70: score += 20
         elif mfi > 55: score += 10
         elif mfi < 30: score -= 20
         elif mfi < 45: score -= 10
         
-        # 3. Mean Reversion & Volatility (RSI + BB)
         if rsi < 30: score += 10
         elif rsi > 70: score -= 10
         if bb_pos < 10: score += 5
@@ -117,29 +117,33 @@ def analyze_stock_quant(ticker):
         
         final_score = int(max(0, min(100, score)))
         
-        # 방향성 맵핑
         if final_score >= 60:
             if final_score >= 80: verdict, color = "STRONG BUY (강력 매수)", "#00873C"
             else: verdict, color = "ACCUMULATE (분할 매수)", "#62B236"
-            conf_str = f"매수 확률: {final_score}%"
-            conf_val = final_score
-            conf_bg = "#E6F4EA"
+            conf_str, conf_val, conf_bg = f"매수 확률: {final_score}%", final_score, "#E6F4EA"
         elif final_score <= 40:
             if final_score <= 20: verdict, color = "STRONG SELL (강력 매도)", "#FF3B30"
             else: verdict, color = "REDUCE (비중 축소)", "#FF9500"
-            conf_str = f"매도 확률: {100 - final_score}%"
-            conf_val = 100 - final_score
-            conf_bg = "#FCE8E6"
+            conf_str, conf_val, conf_bg = f"매도 확률: {100 - final_score}%", 100 - final_score, "#FCE8E6"
         else:
-            verdict, color = "HOLD (중립 관망)", "#8E8E93"
-            conf_str = f"방향성 모호 (스코어: {final_score})"
-            conf_val = 50
-            conf_bg = "#F1F3F5"
+            verdict, color, conf_str, conf_val, conf_bg = "HOLD (중립 관망)", "#8E8E93", f"방향성 모호 (스코어: {final_score})", 50, "#F1F3F5"
             
         return {
             "Ticker": ticker, "Price": curr_price, "RSI": round(rsi, 2), "MACD_Status": "Bullish Cross" if m_val > s_val else "Bearish Cross",
             "BB_Pos": round(bb_pos, 1), "ADX": round(adx, 1), "MFI": round(mfi, 1), "ATR": round(atr, 2), "ATR_Pct": round(atr_pct, 2),
             "Verdict": verdict, "Conf_Str": conf_str, "Conf_Val": conf_val, "Conf_Bg": conf_bg, "Score": final_score, "Color": color, "df": df
+        }
+    except: return None
+
+# --- 매크로 데이터 패치 함수 (캐싱으로 속도 최적화) ---
+@st.cache_data(ttl=600)
+def get_macro_data():
+    try:
+        vix = yf.Ticker("^VIX").history(period="5d")['Close']
+        tnx = yf.Ticker("^TNX").history(period="5d")['Close']
+        return {
+            "VIX": vix.iloc[-1], "VIX_diff": vix.iloc[-1] - vix.iloc[-2],
+            "TNX": tnx.iloc[-1], "TNX_diff": tnx.iloc[-1] - tnx.iloc[-2]
         }
     except: return None
 
@@ -149,7 +153,7 @@ st.markdown("<h2 style='text-align: left; color: #1C1C1E; font-weight: 900; lett
 if 'my_portfolio' not in st.session_state:
     st.session_state.my_portfolio = {"SK하이닉스": "000660.KS", "IonQ": "IONQ"}
 
-tab1, tab2, tab3 = st.tabs(["[1] ASSET STRATEGY (자산 전략)", "[2] UNIVERSE SCREENING (전수 조사)", "[3] RESEARCH (리서치)"])
+tab1, tab2, tab3 = st.tabs(["[1] ASSET STRATEGY (자산 전략)", "[2] UNIVERSE SCREENING (전수 조사)", "[3] MACRO & RESEARCH (거시/정성 분석)"])
 
 # [탭 1: 자산 전략]
 with tab1:
@@ -168,40 +172,16 @@ with tab1:
         data = analyze_stock_quant(tk)
         if data:
             with p_cols[i % 2]:
+                rsi_msg = f"RSI(심리 강도)가 {data['RSI']}입니다. 현재 {'과열권으로 단기 차익매물 출회 가능성' if data['RSI'] > 65 else '침체권으로 저가 매수세 유입 가능성' if data['RSI'] < 35 else '시장 심리가 안정된 중립 구간'}입니다."
+                macd_msg = f"MACD 추세가 {data['MACD_Status']}입니다. 단기 이동평균이 장기 이동평균을 {'상향 돌파하여 상승 랠리' if 'Bullish' in data['MACD_Status'] else '하향 이탈하여 하락 압력'}가 형성 중입니다."
+                bb_msg = f"BB(가격 편차 위치)가 {data['BB_Pos']}%입니다. 가격이 통계적 밴드의 {'상단을 뚫어 단기 조정이 예상됨' if data['BB_Pos'] > 85 else '하단에 닿아 기술적 반등이 기대됨' if data['BB_Pos'] < 15 else '정상 범위 안에서 움직임'}을 시사합니다."
+                adx_msg = f"ADX(추세 강도)가 {data['ADX']}입니다. 25를 넘으면 추세가 강함을 뜻하며, 현재 {'명확한 방향성을 가지고 뻗어나가는 중' if data['ADX'] > 25 else '방향성이 뚜렷하지 않은 횡보장세'}입니다."
+                mfi_msg = f"MFI(자금 유입)가 {data['MFI']}입니다. 거래량이 실린 스마트 머니가 {'강하게 유입되고 있어 추세 신뢰도가 높음' if data['MFI'] > 60 else '점차 빠져나가고 있어 보수적 접근 필요' if data['MFI'] < 40 else '균형을 이루고 있음'}을 의미합니다."
                 
-                # --- 동적이고 촘촘한 코멘트 생성 로직 ---
-                
-                # 1. RSI (5단계 세분화)
-                rsi = data['RSI']
-                if rsi >= 70: rsi_msg = f"RSI가 {rsi}로 **과열권(Overbought)**입니다. 단기 고점 징후가 있으니 신규 진입은 보수적으로 접근해야 합니다."
-                elif rsi >= 60: rsi_msg = f"RSI가 {rsi}로 **강세 심리**가 유지 중입니다. 우상향 랠리를 이어갈 추가 동력이 남아있습니다."
-                elif rsi <= 30: rsi_msg = f"RSI가 {rsi}로 **극단적 과매도(Oversold)**입니다. 투매가 진정되면 기술적 반등(Dead Cat Bounce)을 노릴 만합니다."
-                elif rsi <= 45: rsi_msg = f"RSI가 {rsi}로 **약세 심리**가 지배적입니다. 아직 하방 지지선이 완전히 확인되지 않았습니다."
-                else: rsi_msg = f"RSI가 {rsi}로 **팽팽한 중립** 상태입니다. 뚜렷한 매수/매도 우위가 없는 눈치싸움 구간입니다."
-                
-                # 2. MACD & BB
-                macd_msg = f"MACD가 **{data['MACD_Status']}**입니다. 단기 이평선이 장기 이평선을 {'상향 돌파하여 **상승 모멘텀**이 작동 중' if 'Bullish' in data['MACD_Status'] else '하향 이탈하여 **하락 압력**이 작동 중'}입니다."
-                bb_msg = f"BB 위치는 **{data['BB_Pos']}%**입니다. 통계적 밴드의 {'상단을 뚫어 평균 회귀(조정)가 우려됨' if data['BB_Pos'] > 85 else '하단에 닿아 기술적 반등이 기대됨' if data['BB_Pos'] < 15 else '중심부에서 정상적인 변동성 내에 머무르고 있음'}을 시사합니다."
-                
-                # 3. MFI & ADX
-                adx = data['ADX']
-                mfi = data['MFI']
-                adx_msg = f"ADX(추세 강도)는 **{adx}**입니다. {'현재 방향(상승이든 하락이든)으로 **매우 강한 추세**를 형성 중' if adx > 25 else '**뚜렷한 방향성이 없는 횡보장**으로 박스권 매매가 유효'}합니다."
-                
-                if mfi >= 70: mfi_msg = f"MFI(자금 유입)는 **{mfi}**입니다. 스마트 머니(거대 자금)가 **공격적으로 유입**되고 있어 상승 신뢰도가 높습니다."
-                elif mfi >= 55: mfi_msg = f"MFI는 **{mfi}**로 매수 자금이 **점진적으로 유입**되며 수급을 받쳐주고 있습니다."
-                elif mfi <= 30: mfi_msg = f"MFI는 **{mfi}**로 자금이 **빠르게 유출**되고 있습니다. 추세 붕괴 리스크를 관리해야 합니다."
-                elif mfi <= 45: mfi_msg = f"MFI는 **{mfi}**로 자금 유입이 **저조한 편**입니다. 가짜 반등에 속지 않도록 유의하세요."
-                else: mfi_msg = f"MFI는 **{mfi}**로 자금의 유입과 유출이 **균형**을 이루고 있습니다."
-
-                # 4. ATR (비율 기반 리스크 평가 - 핵심 수정 사항)
                 atr_pct = data['ATR_Pct']
-                if atr_pct >= 5.0:
-                    atr_msg = f"ATR(변동성)은 {data['ATR']:.2f}로 주가의 **{atr_pct}%**에 달하는 **[고변동성 종목]**입니다. 하루에도 위아래 흔들림이 커 타이트한 손절매 등 철저한 리스크 관리가 필수적입니다."
-                elif atr_pct >= 2.0:
-                    atr_msg = f"ATR(변동성)은 {data['ATR']:.2f}로 주가의 **{atr_pct}%** 수준입니다. 일반적인 주식의 **[정상 변동폭]** 내에서 무난하게 움직이고 있습니다."
-                else:
-                    atr_msg = f"ATR(변동성)은 {data['ATR']:.2f}로 주가의 **{atr_pct}%** 불과한 **[저변동성/방어주]** 성향을 보입니다. 움직임이 무거워 단기 트레이딩보다는 중장기 관점이 어울립니다."
+                if atr_pct >= 5.0: atr_msg = f"ATR(변동성)은 주가의 **{atr_pct}%**에 달하는 **[고변동성 종목]**입니다. 철저한 손절매 등 리스크 관리가 필수적입니다."
+                elif atr_pct >= 2.0: atr_msg = f"ATR(변동성)은 주가의 **{atr_pct}%** 수준입니다. 일반적인 주식의 **[정상 변동폭]** 내에서 움직이고 있습니다."
+                else: atr_msg = f"ATR(변동성)은 주가의 **{atr_pct}%**에 불과한 **[저변동성 방어주]** 성향을 보입니다. 중장기 관점이 어울립니다."
 
                 st.markdown(f"""
                 <div class="ib-card">
@@ -281,11 +261,8 @@ with tab2:
 
     c1, c2 = st.columns(2)
     column_cfg = {
-        "Score (퀀트점수)": st.column_config.ProgressColumn(
-            "Quant Score (0-100)", min_value=0, max_value=100, format="%d"
-        )
+        "Score (퀀트점수)": st.column_config.ProgressColumn("Quant Score (0-100)", min_value=0, max_value=100, format="%d")
     }
-
     with c1:
         st.markdown("🇰🇷 **KOSPI & KOSDAQ Top 50**")
         st.dataframe(get_screen_data(KR_STOCKS), use_container_width=True, hide_index=True, column_config=column_cfg)
@@ -293,14 +270,85 @@ with tab2:
         st.markdown("🇺🇸 **S&P 500 & NASDAQ Top 50**")
         st.dataframe(get_screen_data(US_STOCKS), use_container_width=True, hide_index=True, column_config=column_cfg)
 
-# [탭 3: 리서치 리포트]
+# [탭 3: 매크로 및 정성 분석 (토큰 프리)]
 with tab3:
-    st.markdown("### Institutional Alpha Research (전문가 전략 보고)")
+    st.markdown("### 🏛️ Macro & Qualitative Intelligence")
+    st.info("💡 거시 경제 지표 및 내 포트폴리오 종목의 최신 글로벌 뉴스를 API 제한 없이 실시간으로 제공합니다.")
+    
+    # 1. 매크로 지표 대시보드
+    st.markdown("#### 🌐 Core Macro Indicators (실시간 거시 지표)")
+    macro = get_macro_data()
+    if macro:
+        c_mac1, c_mac2, c_mac3 = st.columns(3)
+        with c_mac1:
+            vix_color = "red" if macro['VIX_diff'] > 0 else "green"
+            st.markdown(f"""
+            <div class="macro-card">
+                <div style="font-size: 14px; color: #8E8E93; font-weight: 700;">VIX (시장 공포 지수)</div>
+                <div style="font-size: 28px; font-weight: 900; margin-top: 5px;">{macro['VIX']:.2f}</div>
+                <div style="color: {vix_color}; font-weight: 600;">{'+' if macro['VIX_diff'] > 0 else ''}{macro['VIX_diff']:.2f}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with c_mac2:
+            tnx_color = "red" if macro['TNX_diff'] > 0 else "green"
+            st.markdown(f"""
+            <div class="macro-card" style="border-left-color: #007AFF;">
+                <div style="font-size: 14px; color: #8E8E93; font-weight: 700;">US 10-Yr Yield (미 국채 10년물 금리)</div>
+                <div style="font-size: 28px; font-weight: 900; margin-top: 5px;">{macro['TNX']:.3f}%</div>
+                <div style="color: {tnx_color}; font-weight: 600;">{'+' if macro['TNX_diff'] > 0 else ''}{macro['TNX_diff']:.3f}%p</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with c_mac3:
+            st.markdown("""
+            <div style="padding: 10px; font-size: 12.5px; color: #495057; line-height: 1.6;">
+                <b>📌 지표 가이드:</b><br>
+                • <b>VIX가 오르면</b>: 시장의 불확실성과 공포가 커지고 있음을 의미합니다 (보통 주가 하락).<br>
+                • <b>국채 금리가 오르면</b>: 연준의 긴축(금리 인하 지연) 우려가 커져 기술/성장주에 악재로 작용합니다.
+            </div>
+            """, unsafe_allow_html=True)
+            
+    st.markdown("---")
+    
+    # 2. 내 포트폴리오 뉴스 피드 (Token Free)
+    st.markdown("#### 📰 Portfolio News Feed (내 종목 최신 이벤트)")
+    news_cols = st.columns(2)
+    for i, (name, tk) in enumerate(st.session_state.my_portfolio.items()):
+        with news_cols[i % 2]:
+            with st.expander(f"📌 {name} ({tk}) 주요 뉴스 확인", expanded=True):
+                try:
+                    # yfinance 내장 뉴스 기능 사용 (Gemini API 미사용)
+                    stock_news = yf.Ticker(tk).news
+                    if stock_news:
+                        for n in stock_news[:4]: # 상위 4개 뉴스
+                            title = n.get('title', '제목 없음')
+                            publisher = n.get('publisher', '출처 미상')
+                            link = n.get('link', '#')
+                            
+                            # 날짜 변환 (UNIX timestamp -> 일반 날짜)
+                            pub_time = "최근"
+                            if 'providerPublishTime' in n:
+                                pub_time = time.strftime('%Y-%m-%d', time.localtime(n['providerPublishTime']))
+                                
+                            st.markdown(f"""
+                            <div style="margin-bottom: 12px; font-size: 13.5px;">
+                                <a href="{link}" target="_blank" style="text-decoration: none; color: #00529B; font-weight: 600; display: block; margin-bottom: 3px;">{title}</a>
+                                <span style="font-size: 11.5px; color: #8E8E93;">{publisher} • {pub_time}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    else:
+                        st.write("최신 뉴스 데이터가 없습니다.")
+                except Exception as e:
+                    st.write("뉴스를 불러오지 못했습니다.")
+
+    st.markdown("---")
+    
+    # 3. AI 심층 리서치 (기존 기능)
+    st.markdown("#### 🤖 AI Senior Analyst (선택적 심층 브리핑)")
     if gemini_client:
-        if st.button("Generate Senior Analyst Briefing (리포트 생성)"):
+        if st.button("Generate Senior Analyst Briefing (토큰 소모)"):
             with st.spinner("Accessing Terminal Meta-Data..."):
-                prompt = "당신은 월스트리트의 시니어 애널리스트입니다. 현재 마켓의 주요 기술적 지표들을 기반으로, 연세대 경영/공학 대학생 수준에서 논리적으로 납득 가능한 투자 대응 전략 5줄을 마크다운 형식으로 작성하세요."
+                prompt = "당신은 월스트리트의 시니어 애널리스트입니다. 현재 마켓의 거시경제 흐름과 주요 기술적 지표들을 기반으로, 연세대 경영/공학 대학생 수준에서 논리적으로 납득 가능한 투자 대응 전략 5줄을 마크다운 형식으로 작성하세요."
                 try:
                     res = gemini_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                     st.markdown(f"<div style='background-color: #FFFFFF; padding: 25px; border-left: 5px solid #00529B; line-height: 1.8; box-shadow: 0 2px 5px rgba(0,0,0,0.05);'>{res.text}</div>", unsafe_allow_html=True)
-                except Exception as e: st.error(f"Error: {e}")
+                except Exception as e: st.error(f"Error (토큰 제한 발생): {e}")
