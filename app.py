@@ -49,12 +49,10 @@ st.markdown("""
 
 # --- 2. 직관적인 AI 해설 생성 함수 ---
 def get_easy_explanation(rsi, macd_trend, bb_val, verdict):
-    # 비전공자 맞춤형 직관적 번역 로직
     rsi_text = "사람들이 공포에 질려 다 팔아버렸어요! (바닥권 진입 가능성)" if rsi <= 35 else "너도나도 사겠다고 몰려들어 거품이 조금 꼈습니다." if rsi >= 70 else "사는 사람과 파는 사람이 팽팽하게 눈치를 보고 있습니다."
     macd_text = "주가가 위로 올라가려는 '순풍'을 탔습니다." if macd_trend == "상승" else "지금은 주가가 아래로 밀리는 '역풍'이 불고 있네요."
     bb_text = "평소 놀던 가격대의 맨 밑바닥까지 떨어졌어요. 튀어 오를 자리를 찾고 있습니다." if bb_val <= 10 else "평소 가격대의 지붕을 뚫고 나갔습니다. 다시 내려올 확률이 높아요." if bb_val >= 90 else "평소 움직이는 정상적인 가격대 안에서 얌전히 움직이고 있습니다."
     
-    # iOS 스타일 인사이트 카드 HTML
     html = f"""
     <div style="background-color: #F8F8F9; border-radius: 18px; padding: 20px; margin-top: 8px; margin-bottom: 24px; border: 1px solid #E5E5EA;">
         <div style="font-size: 15px; color: #1C1C1E; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center;">
@@ -72,7 +70,34 @@ def get_easy_explanation(rsi, macd_trend, bb_val, verdict):
     """
     return html
 
-# --- 3. 정밀 분석 엔진 ---
+# --- 3. 유니버스 데이터 ---
+KR_STOCKS = {
+    '005930.KS': '삼성전자', '000660.KS': 'SK하이닉스', '005380.KS': '현대차', '000270.KS': '기아', '035420.KS': 'NAVER',
+    '035720.KS': '카카오', '068270.KS': '셀트리온', '005490.KS': 'POSCO홀딩스', '051910.KS': 'LG화학', '006400.KS': '삼성SDI',
+    '105560.KS': 'KB금융', '055550.KS': '신한지주', '090430.KS': '아모레퍼시픽', '086520.KQ': '에코프로', '036570.KS': '엔씨소프트',
+    '096770.KS': 'SK이노베이션', '066570.KS': 'LG전자', '028260.KS': '삼성물산', '015760.KS': '한국전력', '011200.KS': 'HMM',
+    '033780.KS': 'KT&G', '086790.KS': '하나금융지주', '034220.KS': 'LG디스플레이', '003490.KS': '대한항공', '034020.KS': '두산에너빌리티',
+    '267250.KS': 'HD현대', '032830.KS': '삼성생명', '138040.KS': '메리츠금융지주', '042660.KS': '한화오션', '259960.KS': '크래프톤',
+    '035900.KQ': 'JYP Ent.', '251270.KS': '넷마블', '352820.KS': '하이브', '010950.KS': 'S-Oil', '000810.KS': '삼성화재',
+    '030200.KS': 'KT', '017670.KS': 'SK텔레콤', '036460.KS': '한국가스공사', '010130.KS': '고려아연', '011780.KS': '금호석유',
+    '051900.KS': 'LG생활건강', '009150.KS': '삼성전기', '018260.KS': '대한제당', '000100.KS': '유한양행', '000080.KS': '하이트진로',
+    '005830.KS': 'DB손해보험', '000720.KS': '현대건설', '012330.KS': '현대모비스', '004020.KS': '현대제철', '024110.KS': '기업은행'
+}
+
+US_STOCKS = {
+    'AAPL': 'Apple', 'MSFT': 'Microsoft', 'NVDA': 'NVIDIA', 'GOOGL': 'Alphabet', 'AMZN': 'Amazon',
+    'META': 'Meta', 'TSLA': 'Tesla', 'AVGO': 'Broadcom', 'LLY': 'Eli Lilly', 'JPM': 'JPMorgan',
+    'V': 'Visa', 'WMT': 'Walmart', 'JNJ': 'J&J', 'PG': 'P&G', 'MA': 'Mastercard',
+    'HD': 'Home Depot', 'CVX': 'Chevron', 'MRK': 'Merck', 'COST': 'Costco', 'ABBV': 'AbbVie',
+    'PEP': 'PepsiCo', 'KO': 'Coca-Cola', 'ADBE': 'Adobe', 'ORCL': 'Oracle', 'BAC': 'BofA',
+    'CRM': 'Salesforce', 'AMD': 'AMD', 'NFLX': 'Netflix', 'TMO': 'Thermo Fisher', 'CSCO': 'Cisco',
+    'NKE': 'Nike', 'DIS': 'Disney', 'PFE': 'Pfizer', 'ABT': 'Abbott', 'DHR': 'Danaher',
+    'QCOM': 'Qualcomm', 'CAT': 'Caterpillar', 'VZ': 'Verizon', 'TXN': 'TI', 'INTC': 'Intel',
+    'AMAT': 'Applied Mat.', 'INTU': 'Intuit', 'IBM': 'IBM', 'LOW': 'Lowe\'s', 'NEE': 'NextEra',
+    'UNP': 'Union Pacific', 'COP': 'ConocoPhillips', 'GE': 'GE', 'GS': 'Goldman Sachs', 'MS': 'Morgan Stanley'
+}
+
+# --- 4. 정밀 분석 엔진 ---
 @st.cache_data(ttl=3600)
 def analyze_stock_detailed(ticker):
     try:
@@ -108,7 +133,7 @@ def analyze_stock_detailed(ticker):
         }
     except: return None
 
-# --- 4. 메인 화면 ---
+# --- 5. 메인 화면 ---
 if 'my_portfolio' not in st.session_state:
     st.session_state.my_portfolio = {"SK하이닉스": "000660.KS", "NVIDIA": "NVDA"}
 
@@ -116,6 +141,7 @@ st.markdown("<h1 style='text-align: center; color: #1C1C1E; font-weight: 800; ma
 
 tab1, tab2, tab3 = st.tabs(["포트폴리오", "시장 스크리닝", "AI 브리핑"])
 
+# [탭 1: 포트폴리오 관리]
 with tab1:
     st.markdown("<h3 style='color: #1C1C1E; font-weight: 700;'>나의 종목 관리</h3>", unsafe_allow_html=True)
     col_a, col_b, col_c = st.columns([2, 2, 1])
@@ -135,16 +161,14 @@ with tab1:
             with p_cols[i % 2]:
                 st.metric(f"{name}", f"{data['Price']:,.1f}", f"AI 점수: {data['Score']}점")
                 
-                # 삭제 버튼
                 if st.button(f"목록에서 삭제", key=f"del_{tk}"):
                     del st.session_state.my_portfolio[name]
                     st.rerun()
 
-                # 💡 [NEW] 직관적 해설 카드 UI 렌더링
+                # 직관적 해설 카드 렌더링
                 explanation_html = get_easy_explanation(data['RSI'], data['MACD'], data['BB_Pos_Val'], data['Verdict'])
                 st.markdown(explanation_html, unsafe_allow_html=True)
                 
-                # 차트 렌더링
                 df_chart = data['df'][-100:]
                 bb_chart = ta.volatility.BollingerBands(df_chart['Close'])
                 bb_h, bb_l = bb_chart.bollinger_hband(), bb_chart.bollinger_lband()
@@ -167,12 +191,39 @@ with tab1:
 
                 st.plotly_chart(fig, use_container_width=True)
 
+# [탭 2: 시장 스크리닝 복구]
 with tab2:
     st.markdown("<h3 style='color: #1C1C1E; font-weight: 700;'>한·미 시장 유니버스 분석</h3>", unsafe_allow_html=True)
-    st.info("이곳의 시장 스크리닝 데이터는 이전과 동일하게 작동합니다.")
-    # (코드 길이를 위해 유니버스 로직은 생략/유지됨)
+    c_kr, c_us = st.columns(2)
+    
+    def get_df(stock_dict):
+        results = []
+        for tk, name in stock_dict.items():
+            res = analyze_stock_detailed(tk)
+            if res:
+                results.append({
+                    "기업명": name, "AI 점수": res['Score'], "판단": res['Verdict'],
+                    "RSI": res['RSI'], "MACD": res['MACD'], "BB": res['BB_Pos']
+                })
+        return pd.DataFrame(results)
 
+    with c_kr:
+        st.markdown("<h5 style='color: #1C1C1E;'>🇰🇷 KOSPI & KOSDAQ 50</h5>", unsafe_allow_html=True)
+        st.dataframe(get_df(KR_STOCKS), use_container_width=True, hide_index=True, column_config={"AI 점수": st.column_config.ProgressColumn(min_value=0, max_value=100)})
+
+    with c_us:
+        st.markdown("<h5 style='color: #1C1C1E;'>🇺🇸 S&P 500 & NASDAQ 50</h5>", unsafe_allow_html=True)
+        st.dataframe(get_df(US_STOCKS), use_container_width=True, hide_index=True, column_config={"AI 점수": st.column_config.ProgressColumn(min_value=0, max_value=100)})
+
+# [탭 3: AI 브리핑 복구]
 with tab3:
     st.markdown("<h3 style='color: #1C1C1E; font-weight: 700;'>Gemini 데일리 브리핑</h3>", unsafe_allow_html=True)
     if gemini_model:
-        st.success("AI 브리핑 시스템 정상 작동 중입니다.")
+        market_news = "최근 기술주 전반에 조정이 오고 있으며, 반도체 섹터의 변동성이 큽니다. 금리 인하 기대감은 다소 후퇴했습니다."
+        try:
+            res = gemini_model.generate_content(f"투자 전략가로서 다음 시장 상황을 분석하고 비전공자도 이해할 수 있게 3줄로 요약해줘: {market_news}")
+            st.success(res.text)
+        except Exception as e:
+            st.error(f"AI 브리핑 생성 중 오류가 발생했습니다: {e}")
+    else:
+        st.info("Streamlit Cloud 설정(Secrets)에서 GEMINI_API_KEY를 추가해주세요.")
