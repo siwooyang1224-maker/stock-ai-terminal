@@ -8,7 +8,7 @@ import ta
 import google.generativeai as genai
 
 # --- 0. Gemini AI 설정 ---
-GEMINI_API_KEY = "YOUR_API_KEY_HERE" 
+GEMINI_API_KEY = AQ.Ab8RN6LCuzeVpFq2twhVD4-96Fc06eCeaTgU1qCuPVKRn8EJuw
 if GEMINI_API_KEY != "YOUR_API_KEY_HERE":
     genai.configure(api_key=GEMINI_API_KEY)
     gemini_model = genai.GenerativeModel('gemini-1.5-flash')
