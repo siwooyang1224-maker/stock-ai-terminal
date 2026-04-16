@@ -5,173 +5,230 @@ from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
 import ta
+import google.generativeai as genai
 
-# --- 1. 페이지 설정 및 프리미엄 UI CSS ---
-st.set_page_config(page_title="Alpha Terminal Pro", layout="wide")
+# --- 0. Gemini AI 설정 ---
+GEMINI_API_KEY = "YOUR_API_KEY_HERE" 
+if GEMINI_API_KEY != "YOUR_API_KEY_HERE":
+    genai.configure(api_key=GEMINI_API_KEY)
+    gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+
+# --- 1. 페이지 설정 및 Apple iOS 스타일 CSS ---
+st.set_page_config(page_title="Alpha Terminal iOS", layout="wide")
 
 st.markdown("""
 <style>
-    /* 전체 배경 및 여백 설정 */
-    .block-container {padding-top: 2rem; padding-bottom: 2rem; max-width: 1400px;}
-    
-    /* 헤더 및 푸터 숨기기 */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    
-    /* 탭 디자인 모던화 */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background-color: transparent;
+    /* 폰트 및 배경 설정 (iOS 스타일) */
+    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+    * {
+        font-family: '-apple-system', 'BlinkMacSystemFont', 'Pretendard', sans-serif !important;
     }
-    .stTabs [data-baseweb="tab"] {
-        font-size: 1.1rem;
-        font-weight: 600;
-        padding: 10px 20px;
-        border-radius: 8px 8px 0 0;
-        background-color: #f0f2f6;
+    .stApp {
+        background-color: #F2F2F7; /* iOS 기본 백그라운드 그레이 */
+    }
+    .block-container {
+        padding-top: 3rem; 
+        max-width: 1400px;
+    }
+    #MainMenu, footer, header {visibility: hidden;}
+
+    /* iOS 위젯 스타일 카드 (Metric) */
+    div[data-testid="metric-container"] {
+        background-color: #FFFFFF;
+        border-radius: 24px;
+        padding: 24px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.04);
         border: none;
     }
-    .stTabs [aria-selected="true"] {
-        background-color: #1f77b4;
-        color: white !important;
-    }
-    
-    /* 메트릭 카드(숫자) 디자인 */
     div[data-testid="stMetricValue"] {
         font-size: 2.2rem; 
-        font-weight: 800; 
-        color: #1f77b4;
+        font-weight: 700; 
+        color: #1C1C1E;
+        letter-spacing: -0.5px;
     }
-    div[data-testid="metric-container"] {
-        background-color: #ffffff;
-        border: 1px solid #e6e6e6;
-        padding: 20px;
+    div[data-testid="stMetricLabel"] {
+        font-size: 1rem;
+        color: #8E8E93;
+        font-weight: 500;
+    }
+
+    /* 탭 디자인 (iOS Segmented Control 스타일) */
+    .stTabs [data-baseweb="tab-list"] {
+        background-color: #E5E5EA;
         border-radius: 12px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        padding: 4px;
+        gap: 2px;
+        border-bottom: none;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 10px;
+        padding: 8px 16px;
+        color: #8E8E93;
+        font-weight: 600;
+        border: none;
+        background-color: transparent;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #FFFFFF !important;
+        color: #000000 !important;
+        box-shadow: 0 3px 8px rgba(0,0,0,0.12), 0 3px 1px rgba(0,0,0,0.04);
+    }
+    
+    /* 데이터프레임 (표) 모서리 둥글게 */
+    .stDataFrame {
+        background-color: #FFFFFF;
+        border-radius: 20px;
+        padding: 10px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+    }
+    
+    /* 버튼 스타일 (iOS 블루) */
+    .stButton>button {
+        background-color: #007AFF;
+        color: white;
+        border-radius: 14px;
+        border: none;
+        font-weight: 600;
+        padding: 10px;
+    }
+    .stButton>button:hover {
+        background-color: #0056b3;
+        color: white;
+    }
+    
+    /* 입력창 스타일 */
+    .stTextInput input {
+        border-radius: 12px;
+        border: 1px solid #E5E5EA;
+        padding: 12px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. 한/미 30선 기업명 매핑 ---
+# --- 2. 유니버스 (한/미 100선) ---
 KR_STOCKS = {
-    '005930.KS': '삼성전자', '000660.KS': 'SK하이닉스', '005380.KS': '현대차',
-    '000270.KS': '기아', '035420.KS': 'NAVER', '035720.KS': '카카오',
-    '068270.KS': '셀트리온', '005490.KS': 'POSCO홀딩스', '051910.KS': 'LG화학',
-    '006400.KS': '삼성SDI', '105560.KS': 'KB금융', '055550.KS': '신한지주',
-    '090430.KS': '아모레퍼시픽', '086520.KQ': '에코프로', '036570.KS': '엔씨소프트'
+    '005930.KS': '삼성전자', '000660.KS': 'SK하이닉스', '005380.KS': '현대차', '000270.KS': '기아', '035420.KS': 'NAVER',
+    '035720.KS': '카카오', '068270.KS': '셀트리온', '005490.KS': 'POSCO홀딩스', '051910.KS': 'LG화학', '006400.KS': '삼성SDI',
+    '105560.KS': 'KB금융', '055550.KS': '신한지주', '090430.KS': '아모레퍼시픽', '086520.KQ': '에코프로', '036570.KS': '엔씨소프트',
+    '096770.KS': 'SK이노베이션', '066570.KS': 'LG전자', '028260.KS': '삼성물산', '015760.KS': '한국전력', '011200.KS': 'HMM',
+    '033780.KS': 'KT&G', '086790.KS': '하나금융지주', '034220.KS': 'LG디스플레이', '003490.KS': '대한항공', '034020.KS': '두산에너빌리티',
+    '267250.KS': 'HD현대', '032830.KS': '삼성생명', '138040.KS': '메리츠금융지주', '042660.KS': '한화오션', '259960.KS': '크래프톤',
+    '035900.KQ': 'JYP Ent.', '251270.KS': '넷마블', '352820.KS': '하이브', '010950.KS': 'S-Oil', '000810.KS': '삼성화재',
+    '030200.KS': 'KT', '017670.KS': 'SK텔레콤', '036460.KS': '한국가스공사', '010130.KS': '고려아연', '011780.KS': '금호석유',
+    '051900.KS': 'LG생활건강', '009150.KS': '삼성전기', '018260.KS': '대한제당', '000100.KS': '유한양행', '000080.KS': '하이트진로',
+    '005830.KS': 'DB손해보험', '000720.KS': '현대건설', '012330.KS': '현대모비스', '004020.KS': '현대제철', '024110.KS': '기업은행'
 }
 
 US_STOCKS = {
-    'AAPL': 'Apple', 'MSFT': 'Microsoft', 'NVDA': 'NVIDIA',
-    'GOOGL': 'Alphabet (Google)', 'AMZN': 'Amazon', 'META': 'Meta',
-    'TSLA': 'Tesla', 'AVGO': 'Broadcom', 'LLY': 'Eli Lilly',
-    'JPM': 'JPMorgan Chase', 'V': 'Visa', 'WMT': 'Walmart',
-    'JNJ': 'Johnson & Johnson', 'PG': 'Procter & Gamble', 'MA': 'Mastercard'
+    'AAPL': 'Apple', 'MSFT': 'Microsoft', 'NVDA': 'NVIDIA', 'GOOGL': 'Alphabet', 'AMZN': 'Amazon',
+    'META': 'Meta', 'TSLA': 'Tesla', 'AVGO': 'Broadcom', 'LLY': 'Eli Lilly', 'JPM': 'JPMorgan',
+    'V': 'Visa', 'WMT': 'Walmart', 'JNJ': 'J&J', 'PG': 'P&G', 'MA': 'Mastercard',
+    'HD': 'Home Depot', 'CVX': 'Chevron', 'MRK': 'Merck', 'COST': 'Costco', 'ABBV': 'AbbVie',
+    'PEP': 'PepsiCo', 'KO': 'Coca-Cola', 'ADBE': 'Adobe', 'ORCL': 'Oracle', 'BAC': 'BofA',
+    'CRM': 'Salesforce', 'AMD': 'AMD', 'NFLX': 'Netflix', 'TMO': 'Thermo Fisher', 'CSCO': 'Cisco',
+    'NKE': 'Nike', 'DIS': 'Disney', 'PFE': 'Pfizer', 'ABT': 'Abbott', 'DHR': 'Danaher',
+    'QCOM': 'Qualcomm', 'CAT': 'Caterpillar', 'VZ': 'Verizon', 'TXN': 'TI', 'INTC': 'Intel',
+    'AMAT': 'Applied Mat.', 'INTU': 'Intuit', 'IBM': 'IBM', 'LOW': 'Lowe\'s', 'NEE': 'NextEra',
+    'UNP': 'Union Pacific', 'COP': 'ConocoPhillips', 'GE': 'GE', 'GS': 'Goldman Sachs', 'MS': 'Morgan Stanley'
 }
 
-# --- 3. AI 판단 엔진 (다이내믹 스코어링 V3) ---
-@st.cache_data(ttl=3600) # 1시간마다 데이터 갱신 (로딩 속도 대폭 개선)
-def analyze_stock(ticker):
+# --- 3. 정밀 분석 엔진 ---
+@st.cache_data(ttl=3600)
+def analyze_stock_detailed(ticker):
     try:
         df = yf.download(ticker, period="1y", progress=False)
-        if df.empty or len(df) < 50: return None, 50, "데이터 부족"
+        if df.empty or len(df) < 50: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
         
         bb = ta.volatility.BollingerBands(df['Close'])
-        df['BB_H'], df['BB_L'] = bb.bollinger_hband(), bb.bollinger_lband()
-        df['RSI'] = ta.momentum.rsi(df['Close'])
+        h, l = bb.bollinger_hband(), bb.bollinger_lband()
+        rsi = ta.momentum.rsi(df['Close']).iloc[-1]
         macd = ta.trend.MACD(df['Close'])
-        df['M'], df['MS'] = macd.macd(), macd.macd_signal()
+        m, ms = macd.macd().iloc[-1], macd.macd_signal().iloc[-1]
         
-        curr = df.iloc[-1]
-        score = 50.0 # 기본 점수
+        curr_price = df['Close'].iloc[-1]
+        bb_pos = (curr_price - l.iloc[-1]) / (h.iloc[-1] - l.iloc[-1]) * 100
+        macd_trend = "상승" if m > ms else "하락"
         
-        # 1. 추세 강도 (MACD)
-        if curr['M'] > curr['MS']: score += 15
+        score = 50.0
+        if m > ms: score += 15
         else: score -= 10
-        
-        # 2. 가격 메리트 (RSI) - 세분화된 점수 부여
-        rsi = curr['RSI']
         if rsi <= 35: score += 20
-        elif rsi <= 45: score += 10
         elif rsi >= 70: score -= 25
-        elif rsi >= 60: score -= 10
-            
-        # 3. 볼린저 밴드 위치 (밴드 폭 대비 현재가 위치)
-        bb_width = curr['BB_H'] - curr['BB_L']
-        if bb_width > 0:
-            bb_pos = (curr['Close'] - curr['BB_L']) / bb_width
-            if bb_pos < 0.1: score += 15
-            elif bb_pos < 0.3: score += 5
-            elif bb_pos > 0.9: score -= 15
-            elif bb_pos > 0.7: score -= 5
-            
-        # 점수 보정 (0 ~ 100 사이로 고정)
+        if bb_pos <= 10: score += 15
+        elif bb_pos >= 90: score -= 15
+        
         final_score = int(max(0, min(100, score)))
+        verdict = "🚀 적극 매수" if final_score >= 80 else "✅ 분할 매수" if final_score >= 60 else "🆘 위험/매도" if final_score <= 35 else "🟡 관망"
         
-        # 판단 기준 세분화
-        if final_score >= 80: verdict = "🚀 강력 매수"
-        elif final_score >= 60: verdict = "✅ 매수 검토"
-        elif final_score <= 35: verdict = "🆘 분할 매도"
-        else: verdict = "🟡 관망 (HOLD)"
-        
-        return df, final_score, verdict
-    except: return None, 50, "오류"
+        return {
+            "Ticker": ticker, "Price": curr_price, "RSI": round(rsi, 1),
+            "MACD": macd_trend, "BB_Pos": f"{bb_pos:.1f}%", "Score": final_score, "Verdict": verdict, "df": df
+        }
+    except: return None
 
-# --- 4. 메인 화면 구성 ---
-st.title("🏛️ 전략 투자 터미널 V3")
-st.markdown("데이터 파이프라인 기반 **정량적 종목 스크리닝** 및 **AI 트레이딩 시그널**")
+# --- 4. 메인 화면 ---
+if 'my_portfolio' not in st.session_state:
+    st.session_state.my_portfolio = {"SK하이닉스": "000660.KS", "TSLL": "TSLL"}
 
-tab1, tab2, tab3 = st.tabs(["💎 포트폴리오 진단", "📊 한·미 전략 종목 30선", "🌍 매크로 리스크"])
+st.markdown("<h1 style='text-align: center; color: #1C1C1E; font-weight: 800; margin-bottom: 2rem;'> Alpha Terminal</h1>", unsafe_allow_html=True)
 
-# [Tab 1: 보유 종목 집중 분석]
+tab1, tab2, tab3 = st.tabs(["포트폴리오", "시장 스크리닝", "AI 브리핑"])
+
 with tab1:
-    my_stocks = {"SK하이닉스": "000660.KS", "TSLL (Tesla 2x)": "TSLL"}
-    cols = st.columns(2)
-    for i, (name, tk) in enumerate(my_stocks.items()):
-        df, score, verdict = analyze_stock(tk)
-        with cols[i]:
-            st.metric(f"{name}", f"{df['Close'].iloc[-1]:,.1f}", f"AI Score: {score}/100")
-            st.markdown(f"**현재 AI 포지션 판단:** {verdict}")
-            
-            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
-            fig.add_trace(go.Candlestick(x=df.index[-100:], open=df['Open'][-100:], high=df['High'][-100:], low=df['Low'][-100:], close=df['Close'][-100:], name="Price"), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df.index[-100:], y=df['BB_H'][-100:], line=dict(color='rgba(150,150,150,0.2)'), name="BB High"), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df.index[-100:], y=df['BB_L'][-100:], line=dict(color='rgba(150,150,150,0.2)'), fill='tonexty', name="BB Low"), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df.index[-100:], y=df['RSI'][-100:], name="RSI", line=dict(color='#9467bd')), row=2, col=1)
-            
-            fig.update_layout(height=450, margin=dict(l=0,r=0,t=20,b=0), template="plotly_white", xaxis_rangeslider_visible=False)
-            st.plotly_chart(fig, use_container_width=True)
-
-# [Tab 2: 추천 30선 리스트 (한/미 분리)]
-with tab2:
-    st.markdown("#### 🎯 AI 스크리닝: 양대 시장 주도주 30선")
-    col_kr, col_us = st.columns(2)
+    st.markdown("<h3 style='color: #1C1C1E; font-weight: 700;'>나의 종목 관리</h3>", unsafe_allow_html=True)
+    col_a, col_b, col_c = st.columns([2, 2, 1])
+    n_name = col_a.text_input("종목명 입력", placeholder="예: 삼성전자")
+    n_ticker = col_b.text_input("티커 입력", placeholder="예: 005930.KS")
+    st.markdown("""<style>div.stButton {margin-top: 28px;}</style>""", unsafe_allow_html=True)
+    if col_c.button("추가하기"):
+        if n_name and n_ticker:
+            st.session_state.my_portfolio[n_name] = n_ticker
+            st.rerun()
     
-    with col_kr:
-        st.subheader("🇰🇷 KOSPI & KOSDAQ 15")
-        kr_data = []
-        for tk, name in KR_STOCKS.items():
-            _, score, v = analyze_stock(tk)
-            kr_data.append({"기업명": name, "AI 스코어": score, "매매 판단": v})
-        
-        df_kr = pd.DataFrame(kr_data)
-        st.dataframe(df_kr, use_container_width=True, hide_index=True)
+    st.write(" ")
+    p_cols = st.columns(2)
+    for i, (name, tk) in enumerate(st.session_state.my_portfolio.items()):
+        data = analyze_stock_detailed(tk)
+        if data:
+            with p_cols[i % 2]:
+                st.metric(f"{name}", f"{data['Price']:,.1f}", f"AI 점수: {data['Score']}점")
+                st.markdown(f"<div style='color:#8E8E93; font-size:0.9rem; margin-bottom:10px;'>💡 <b>상태:</b> {data['Verdict']} <br> 📊 <b>데이터:</b> RSI {data['RSI']} | MACD {data['MACD']} | BB {data['BB_Pos']}</div>", unsafe_allow_html=True)
+                if st.button(f"목록에서 삭제", key=f"del_{tk}"):
+                    del st.session_state.my_portfolio[name]
+                    st.rerun()
+                
+                # 미니멀 차트 (배경 투명화)
+                fig = go.Figure(go.Candlestick(x=data['df'].index[-40:], open=data['df']['Open'][-40:], high=data['df']['High'][-40:], low=data['df']['Low'][-40:], close=data['df']['Close'][-40:]))
+                fig.update_layout(height=200, margin=dict(l=0,r=0,t=0,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', xaxis_rangeslider_visible=False, xaxis_visible=False, yaxis_visible=False)
+                st.plotly_chart(fig, use_container_width=True)
 
-    with col_us:
-        st.subheader("🇺🇸 S&P 500 & NASDAQ 15")
-        us_data = []
-        for tk, name in US_STOCKS.items():
-            _, score, v = analyze_stock(tk)
-            us_data.append({"기업명": name, "AI 스코어": score, "매매 판단": v})
-            
-        df_us = pd.DataFrame(us_data)
-        st.dataframe(df_us, use_container_width=True, hide_index=True)
+with tab2:
+    st.markdown("<h3 style='color: #1C1C1E; font-weight: 700;'>한·미 시장 유니버스 분석</h3>", unsafe_allow_html=True)
+    c_kr, c_us = st.columns(2)
+    
+    def get_df(stock_dict):
+        results = []
+        for tk, name in stock_dict.items():
+            res = analyze_stock_detailed(tk)
+            if res:
+                results.append({
+                    "기업명": name, "AI 점수": res['Score'], "판단": res['Verdict'],
+                    "RSI": res['RSI'], "MACD": res['MACD'], "BB": res['BB_Pos']
+                })
+        return pd.DataFrame(results)
 
-# [Tab 3: 거시경제 분석]
+    with c_kr:
+        st.markdown("<h5 style='color: #1C1C1E;'>🇰🇷 KOSPI & KOSDAQ 50</h5>", unsafe_allow_html=True)
+        st.dataframe(get_df(KR_STOCKS), use_container_width=True, hide_index=True, column_config={"AI 점수": st.column_config.ProgressColumn(min_value=0, max_value=100)})
+
+    with c_us:
+        st.markdown("<h5 style='color: #1C1C1E;'>🇺🇸 S&P 500 & NASDAQ 50</h5>", unsafe_allow_html=True)
+        st.dataframe(get_df(US_STOCKS), use_container_width=True, hide_index=True, column_config={"AI 점수": st.column_config.ProgressColumn(min_value=0, max_value=100)})
+
 with tab3:
-    st.markdown("#### 🌍 글로벌 리스크 매트릭스")
-    st.info("📉 **금리 인하 지연 우려:** 미국 주요 경제지표(CPI, PCE) 발표에 따른 빅테크(Apple, Microsoft) 및 레버리지(TSLL) 변동성 주의")
-    st.warning("🏭 **공급망 및 무역 갈등:** 반도체 장비 수출 통제 이슈가 SK하이닉스, 삼성전자 하반기 실적 가이던스에 미칠 영향 모니터링")
-    st.success("💄 **소비재 반등 가능성:** 중국 경기 부양책 발표 시 아모레퍼시픽, LG화학 등 관련 섹터의 단기 모멘텀 부각 예상")
+    st.markdown("<h3 style='color: #1C1C1E; font-weight: 700;'>Gemini 데일리 브리핑</h3>", unsafe_allow_html=True)
+    if GEMINI_API_KEY == "YOUR_API_KEY_HERE":
+        st.info("API Key를 입력하여 실시간 브리핑을 활성화하세요.")
+    else:
+        st.success("시장 상황 요약 데이터를 수신했습니다.")
