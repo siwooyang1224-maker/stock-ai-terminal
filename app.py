@@ -66,13 +66,17 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. 정밀 퀀트 엔진 ---
+# --- 3. 정밀 퀀트 엔진 (nan 방지 로직 포함) ---
 @st.cache_data(ttl=3600)
 def analyze_stock_quant(ticker):
     try:
         df = yf.download(ticker, period="1y", progress=False)
         if df.empty or len(df) < 50: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
+        
+        # nan 방지: 모든 결측치 행 제거 및 가장 최근 유효 데이터 선택
+        df = df.dropna()
+        if df.empty: return None
         
         bb = ta.volatility.BollingerBands(df['Close'])
         rsi = ta.momentum.rsi(df['Close']).iloc[-1]
@@ -81,9 +85,12 @@ def analyze_stock_quant(ticker):
         
         curr_price = df['Close'].iloc[-1]
         bb_h, bb_l = bb.bollinger_hband().iloc[-1], bb.bollinger_lband().iloc[-1]
-        bb_pos = (curr_price - bb_l) / (bb_h - bb_l) * 100
         
-        # 스코어링 로직 (0-100점 스케일)
+        # 분모가 0이 되는 현상 방지
+        denom = bb_h - bb_l
+        bb_pos = (curr_price - bb_l) / denom * 100 if denom != 0 else 50.0
+        
+        # 스코어링 로직
         score = 50.0
         if rsi < 35: score += 20
         elif rsi > 65: score -= 20
@@ -115,7 +122,7 @@ if 'my_portfolio' not in st.session_state:
 
 tab1, tab2, tab3 = st.tabs(["[1] ASSET STRATEGY (자산 전략)", "[2] UNIVERSE SCREENING (전수 조사)", "[3] RESEARCH (리서치)"])
 
-# [탭 1: 자산 전략 - 영문 기반 (한글 병기)]
+# [탭 1: 자산 전략]
 with tab1:
     col_reg1, col_reg2, col_reg3 = st.columns([2, 2, 1])
     n_name = col_reg1.text_input("Asset Name (종목명)", placeholder="ex) 삼성전자")
@@ -132,38 +139,50 @@ with tab1:
         data = analyze_stock_quant(tk)
         if data:
             with p_cols[i % 2]:
+                # 지표 해석 문장 생성
+                rsi_val = data['RSI']
+                rsi_msg = f"RSI(심리 강도)가 {rsi_val}입니다. 이는 현재 시장 심리가 {'과열권에 진입하여 조정 가능성이 높음' if rsi_val > 70 else '침체권으로 저가 매수세 유입이 기대됨' if rsi_val < 30 else '중립적이며 안정적인 흐름을 유지함'}을 의미합니다."
+                
+                macd_status = data['MACD_Status']
+                macd_msg = f"MACD 추세가 {macd_status} 상태입니다. 현재 주가 모멘텀이 {'상방으로 강화되고 있어 추세 추종이 유리함' if 'Bullish' in macd_status else '하방 압력이 거세지고 있어 신중한 접근이 필요함'}을 의미합니다."
+                
+                bb_pos = data['BB_Pos']
+                bb_msg = f"BB(가격 편차 위치)가 {bb_pos}%입니다. 주가가 {'통계적 변동 범위 상단에 도달하여 평균 회귀 가능성이 존재함' if bb_pos > 85 else '통계적 변동 범위 하단에 위치하여 반등 확률이 높아짐' if bb_pos < 15 else '박스권 내 안정적인 가격 경로를 형성하고 있음'}을 의미합니다."
+
                 st.markdown(f"""
                 <div class="ib-card">
                     <div class="decision-label">{name} ({tk}) / Technical Status (기술적 상태)</div>
                     <div class="decision-value" style="color: {data['Color']};">{data['Verdict']}</div>
                     <table class="data-table">
                         <tr><td>Current Price (현재 주가)</td><td style="text-align:right; font-weight:700;">{data['Price']:,.2f}</td></tr>
-                        <tr><td>RSI (상대강도지수)</td><td style="text-align:right;">{data['RSI']}</td></tr>
+                        <tr><td>RSI (심리 강도)</td><td style="text-align:right;">{data['RSI']}</td></tr>
                         <tr><td>MACD Momentum (추세 모멘텀)</td><td style="text-align:right;">{data['MACD_Status']}</td></tr>
                         <tr><td>BB Standard Dev. Pos (가격 편차 위치)</td><td style="text-align:right;">{data['BB_Pos']}%</td></tr>
                     </table>
+                    <div style="margin-top: 20px; font-size: 13px; color: #495057; line-height: 1.6; background: #F8F9FA; padding: 15px; border-radius: 6px;">
+                        <b>📉 Indicator Analysis (지표 해석):</b><br>
+                        • {rsi_msg}<br>
+                        • {macd_msg}<br>
+                        • {bb_msg}
+                    </div>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # --- 고도화된 3단 차트 (범례 및 선 식별 강화) ---
                 df_chart = data['df'][-120:]
                 fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_heights=[0.5, 0.25, 0.25])
                 
-                # 1. Price & Bollinger Bands
                 fig.add_trace(go.Candlestick(x=df_chart.index, open=df_chart['Open'], high=df_chart['High'], low=df_chart['Low'], close=df_chart['Close'], name="Price (주가)"), row=1, col=1)
-                bb = ta.volatility.BollingerBands(df_chart['Close'])
-                fig.add_trace(go.Scatter(x=df_chart.index, y=bb.bollinger_hband(), line=dict(color='rgba(0,82,155,0.4)', width=1), name="BB Upper (상단선)"), row=1, col=1)
-                fig.add_trace(go.Scatter(x=df_chart.index, y=bb.bollinger_lband(), line=dict(color='rgba(0,82,155,0.4)', width=1), fill='tonexty', name="BB Lower (하단선)"), row=1, col=1)
+                bb_ta = ta.volatility.BollingerBands(df_chart['Close'])
+                fig.add_trace(go.Scatter(x=df_chart.index, y=bb_ta.bollinger_hband(), line=dict(color='rgba(0,82,155,0.4)', width=1), name="BB Upper (상단선)"), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_chart.index, y=bb_ta.bollinger_lband(), line=dict(color='rgba(0,82,155,0.4)', width=1), fill='tonexty', name="BB Lower (하단선)"), row=1, col=1)
                 
-                # 2. MACD
                 macd_ta = ta.trend.MACD(df_chart['Close'])
                 fig.add_trace(go.Scatter(x=df_chart.index, y=macd_ta.macd(), line=dict(color='#00529B', width=1.5), name="MACD Line (추세선)"), row=2, col=1)
                 fig.add_trace(go.Scatter(x=df_chart.index, y=macd_ta.macd_signal(), line=dict(color='#FF9500', width=1), name="Signal Line (신호선)"), row=2, col=1)
                 fig.add_trace(go.Bar(x=df_chart.index, y=macd_ta.macd_diff(), marker_color='#DEE2E6', name="Histogram (강도)"), row=2, col=1)
                 
-                # 3. RSI
                 rsi_ta = ta.momentum.rsi(df_chart['Close'])
-                fig.add_trace(go.Scatter(x=df_chart.index, y=rsi_ta, line=dict(color='#AF52DE', width=1.5), name="RSI (심리강도)"), row=3, col=1)
+                fig.add_trace(go.Scatter(x=df_chart.index, y=rsi_ta, line=dict(color='#AF52DE', width=1.5), name="RSI (심리 강도)"), row=3, col=1)
                 fig.add_hline(y=70, line_dash="dot", line_color="#FF3B30", row=3, col=1)
                 fig.add_hline(y=30, line_dash="dot", line_color="#34C759", row=3, col=1)
                 
@@ -174,7 +193,7 @@ with tab1:
                     del st.session_state.my_portfolio[name]
                     st.rerun()
 
-# [탭 2: 유니버스 스크리닝 - 게이지(Progress) 형식 복구]
+# [탭 2: 유니버스 스크리닝 - 게이지 형식]
 with tab2:
     st.markdown("### Global Universe Screening (100 Assets Summary)")
     
@@ -189,11 +208,9 @@ with tab2:
         return pd.DataFrame(res)
 
     c1, c2 = st.columns(2)
-    
-    # 게이지(Progress Bar) 컬럼 설정
     column_cfg = {
         "Score (퀀트점수)": st.column_config.ProgressColumn(
-            "Quant Score (점수)", min_value=0, max_value=100, format="%d", help="데이터 기반 기술적 분석 합산 점수"
+            "Quant Score (점수)", min_value=0, max_value=100, format="%d"
         )
     }
 
