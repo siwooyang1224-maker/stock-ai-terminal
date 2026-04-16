@@ -5,16 +5,16 @@ from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
 import ta
-import google.generativeai as genai
+# 변경됨: 구글의 최신 SDK 라이브러리
+from google import genai
 
-# --- 0. Gemini AI 보안 설정 ---
+# --- 0. Gemini AI 보안 설정 (최신 Client 방식 적용) ---
 if "GEMINI_API_KEY" in st.secrets:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=GEMINI_API_KEY)
-    # 404 에러 방지를 위해 가장 최신/안정적인 모델로 지정
-    gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+    # 변경됨: genai.configure 대신 Client 객체를 사용합니다.
+    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 else:
-    gemini_model = None
+    gemini_client = None
 
 # --- 1. 페이지 설정 및 Apple iOS 스타일 CSS ---
 st.set_page_config(page_title="Alpha Terminal iOS", layout="wide")
@@ -136,13 +136,13 @@ def analyze_stock_detailed(ticker):
 
 # --- 5. 메인 화면 ---
 if 'my_portfolio' not in st.session_state:
-    # 💡 잃어버리신 TSLL 완벽 복구
     st.session_state.my_portfolio = {"SK하이닉스": "000660.KS", "TSLL": "TSLL"}
 
 st.markdown("<h1 style='text-align: center; color: #1C1C1E; font-weight: 800; margin-bottom: 2rem;'> Alpha Terminal</h1>", unsafe_allow_html=True)
 
 tab1, tab2, tab3 = st.tabs(["포트폴리오", "시장 스크리닝", "AI 브리핑"])
 
+# [탭 1: 포트폴리오 관리]
 with tab1:
     st.markdown("<h3 style='color: #1C1C1E; font-weight: 700;'>나의 종목 관리</h3>", unsafe_allow_html=True)
     col_a, col_b, col_c = st.columns([2, 2, 1])
@@ -166,7 +166,6 @@ with tab1:
                     del st.session_state.my_portfolio[name]
                     st.rerun()
 
-                # 직관적 해설 카드 렌더링
                 explanation_html = get_easy_explanation(data['RSI'], data['MACD'], data['BB_Pos_Val'], data['Verdict'])
                 st.markdown(explanation_html, unsafe_allow_html=True)
                 
@@ -190,8 +189,10 @@ with tab1:
                     fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(200,200,200,0.3)', row=row, col=1)
                     fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(200,200,200,0.3)', row=row, col=1)
 
-                st.plotly_chart(fig, use_container_width=True)
+                # 변경됨: use_container_width=True 대신 width="stretch" 사용
+                st.plotly_chart(fig, width="stretch")
 
+# [탭 2: 시장 스크리닝]
 with tab2:
     st.markdown("<h3 style='color: #1C1C1E; font-weight: 700;'>한·미 시장 유니버스 분석</h3>", unsafe_allow_html=True)
     c_kr, c_us = st.columns(2)
@@ -209,18 +210,25 @@ with tab2:
 
     with c_kr:
         st.markdown("<h5 style='color: #1C1C1E;'>🇰🇷 KOSPI & KOSDAQ 50</h5>", unsafe_allow_html=True)
-        st.dataframe(get_df(KR_STOCKS), use_container_width=True, hide_index=True, column_config={"AI 점수": st.column_config.ProgressColumn(min_value=0, max_value=100)})
+        # 변경됨: use_container_width=True 대신 width="stretch" 사용
+        st.dataframe(get_df(KR_STOCKS), width="stretch", hide_index=True, column_config={"AI 점수": st.column_config.ProgressColumn(min_value=0, max_value=100)})
 
     with c_us:
         st.markdown("<h5 style='color: #1C1C1E;'>🇺🇸 S&P 500 & NASDAQ 50</h5>", unsafe_allow_html=True)
-        st.dataframe(get_df(US_STOCKS), use_container_width=True, hide_index=True, column_config={"AI 점수": st.column_config.ProgressColumn(min_value=0, max_value=100)})
+        # 변경됨: use_container_width=True 대신 width="stretch" 사용
+        st.dataframe(get_df(US_STOCKS), width="stretch", hide_index=True, column_config={"AI 점수": st.column_config.ProgressColumn(min_value=0, max_value=100)})
 
+# [탭 3: AI 브리핑]
 with tab3:
     st.markdown("<h3 style='color: #1C1C1E; font-weight: 700;'>Gemini 데일리 브리핑</h3>", unsafe_allow_html=True)
-    if gemini_model:
+    if gemini_client:
         market_news = "최근 기술주 전반에 조정이 오고 있으며, 반도체 섹터의 변동성이 큽니다. 금리 인하 기대감은 다소 후퇴했습니다."
         try:
-            res = gemini_model.generate_content(f"투자 전략가로서 다음 시장 상황을 분석하고 비전공자도 이해할 수 있게 3줄로 요약해줘: {market_news}")
+            # 변경됨: 최신 Client 문법 적용 및 모델 고정
+            res = gemini_client.models.generate_content(
+                model='gemini-1.5-flash',
+                contents=f"투자 전략가로서 다음 시장 상황을 분석하고 비전공자도 이해할 수 있게 3줄로 요약해줘: {market_news}"
+            )
             st.success(res.text)
         except Exception as e:
             st.error(f"AI 브리핑 생성 중 오류가 발생했습니다: {e}")
