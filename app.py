@@ -71,7 +71,7 @@ US_STOCKS = {
 }
 
 # --- 3. AI 판단 엔진 (다이내믹 스코어링 V3) ---
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600) # 1시간마다 데이터 갱신 (로딩 속도 대폭 개선)
 def analyze_stock(ticker):
     try:
         df = yf.download(ticker, period="1y", progress=False)
@@ -118,3 +118,60 @@ def analyze_stock(ticker):
         
         return df, final_score, verdict
     except: return None, 50, "오류"
+
+# --- 4. 메인 화면 구성 ---
+st.title("🏛️ 전략 투자 터미널 V3")
+st.markdown("데이터 파이프라인 기반 **정량적 종목 스크리닝** 및 **AI 트레이딩 시그널**")
+
+tab1, tab2, tab3 = st.tabs(["💎 포트폴리오 진단", "📊 한·미 전략 종목 30선", "🌍 매크로 리스크"])
+
+# [Tab 1: 보유 종목 집중 분석]
+with tab1:
+    my_stocks = {"SK하이닉스": "000660.KS", "TSLL (Tesla 2x)": "TSLL"}
+    cols = st.columns(2)
+    for i, (name, tk) in enumerate(my_stocks.items()):
+        df, score, verdict = analyze_stock(tk)
+        with cols[i]:
+            st.metric(f"{name}", f"{df['Close'].iloc[-1]:,.1f}", f"AI Score: {score}/100")
+            st.markdown(f"**현재 AI 포지션 판단:** {verdict}")
+            
+            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
+            fig.add_trace(go.Candlestick(x=df.index[-100:], open=df['Open'][-100:], high=df['High'][-100:], low=df['Low'][-100:], close=df['Close'][-100:], name="Price"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index[-100:], y=df['BB_H'][-100:], line=dict(color='rgba(150,150,150,0.2)'), name="BB High"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index[-100:], y=df['BB_L'][-100:], line=dict(color='rgba(150,150,150,0.2)'), fill='tonexty', name="BB Low"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index[-100:], y=df['RSI'][-100:], name="RSI", line=dict(color='#9467bd')), row=2, col=1)
+            
+            fig.update_layout(height=450, margin=dict(l=0,r=0,t=20,b=0), template="plotly_white", xaxis_rangeslider_visible=False)
+            st.plotly_chart(fig, use_container_width=True)
+
+# [Tab 2: 추천 30선 리스트 (한/미 분리)]
+with tab2:
+    st.markdown("#### 🎯 AI 스크리닝: 양대 시장 주도주 30선")
+    col_kr, col_us = st.columns(2)
+    
+    with col_kr:
+        st.subheader("🇰🇷 KOSPI & KOSDAQ 15")
+        kr_data = []
+        for tk, name in KR_STOCKS.items():
+            _, score, v = analyze_stock(tk)
+            kr_data.append({"기업명": name, "AI 스코어": score, "매매 판단": v})
+        
+        df_kr = pd.DataFrame(kr_data)
+        st.dataframe(df_kr, use_container_width=True, hide_index=True)
+
+    with col_us:
+        st.subheader("🇺🇸 S&P 500 & NASDAQ 15")
+        us_data = []
+        for tk, name in US_STOCKS.items():
+            _, score, v = analyze_stock(tk)
+            us_data.append({"기업명": name, "AI 스코어": score, "매매 판단": v})
+            
+        df_us = pd.DataFrame(us_data)
+        st.dataframe(df_us, use_container_width=True, hide_index=True)
+
+# [Tab 3: 거시경제 분석]
+with tab3:
+    st.markdown("#### 🌍 글로벌 리스크 매트릭스")
+    st.info("📉 **금리 인하 지연 우려:** 미국 주요 경제지표(CPI, PCE) 발표에 따른 빅테크(Apple, Microsoft) 및 레버리지(TSLL) 변동성 주의")
+    st.warning("🏭 **공급망 및 무역 갈등:** 반도체 장비 수출 통제 이슈가 SK하이닉스, 삼성전자 하반기 실적 가이던스에 미칠 영향 모니터링")
+    st.success("💄 **소비재 반등 가능성:** 중국 경기 부양책 발표 시 아모레퍼시픽, LG화학 등 관련 섹터의 단기 모멘텀 부각 예상")
