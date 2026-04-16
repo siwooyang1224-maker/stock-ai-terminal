@@ -5,13 +5,12 @@ from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
 import ta
-# 변경됨: 구글의 최신 SDK 라이브러리
 from google import genai
+import time  # 추가됨: 503 에러 발생 시 대기 시간을 주기 위한 라이브러리
 
 # --- 0. Gemini AI 보안 설정 (최신 Client 방식 적용) ---
 if "GEMINI_API_KEY" in st.secrets:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-    # 변경됨: genai.configure 대신 Client 객체를 사용합니다.
     gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 else:
     gemini_client = None
@@ -189,7 +188,6 @@ with tab1:
                     fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(200,200,200,0.3)', row=row, col=1)
                     fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(200,200,200,0.3)', row=row, col=1)
 
-                # 변경됨: use_container_width=True 대신 width="stretch" 사용
                 st.plotly_chart(fig, width="stretch")
 
 # [탭 2: 시장 스크리닝]
@@ -210,27 +208,44 @@ with tab2:
 
     with c_kr:
         st.markdown("<h5 style='color: #1C1C1E;'>🇰🇷 KOSPI & KOSDAQ 50</h5>", unsafe_allow_html=True)
-        # 변경됨: use_container_width=True 대신 width="stretch" 사용
         st.dataframe(get_df(KR_STOCKS), width="stretch", hide_index=True, column_config={"AI 점수": st.column_config.ProgressColumn(min_value=0, max_value=100)})
 
     with c_us:
         st.markdown("<h5 style='color: #1C1C1E;'>🇺🇸 S&P 500 & NASDAQ 50</h5>", unsafe_allow_html=True)
-        # 변경됨: use_container_width=True 대신 width="stretch" 사용
         st.dataframe(get_df(US_STOCKS), width="stretch", hide_index=True, column_config={"AI 점수": st.column_config.ProgressColumn(min_value=0, max_value=100)})
 
-# [탭 3: AI 브리핑]
+# [탭 3: AI 브리핑 - 수정된 부분]
 with tab3:
     st.markdown("<h3 style='color: #1C1C1E; font-weight: 700;'>Gemini 데일리 브리핑</h3>", unsafe_allow_html=True)
     if gemini_client:
         market_news = "최근 기술주 전반에 조정이 오고 있으며, 반도체 섹터의 변동성이 큽니다. 금리 인하 기대감은 다소 후퇴했습니다."
-        try:
-            # 변경됨: 최신 Client 문법 적용 및 모델 고정
-            res = gemini_client.models.generate_content(
-                model='gemini-2.5-flash', # <--- 이 부분이 수정되었습니다!
-                contents=f"투자 전략가로서 다음 시장 상황을 분석하고 비전공자도 이해할 수 있게 3줄로 요약해줘: {market_news}"
-            )
-            st.success(res.text)
-        except Exception as e:
-            st.error(f"AI 브리핑 생성 중 오류가 발생했습니다: {e}")
+        
+        # 버튼을 눌렀을 때만 API를 호출하도록 변경
+        if st.button("🔄 AI 브리핑 생성 / 재시도"):
+            with st.spinner("AI가 시장 상황을 분석하고 있습니다... (서버 혼잡 시 약간의 시간이 소요될 수 있습니다)"):
+                max_retries = 3  # 최대 3번까지 재시도
+                
+                for attempt in range(max_retries):
+                    try:
+                        res = gemini_client.models.generate_content(
+                            model='gemini-2.5-flash',
+                            contents=f"투자 전략가로서 다음 시장 상황을 분석하고 비전공자도 이해할 수 있게 3줄로 요약해줘: {market_news}"
+                        )
+                        st.success(res.text)
+                        break  # 성공하면 반복문(재시도) 탈출
+                        
+                    except Exception as e:
+                        error_msg = str(e)
+                        # 503 과부하 에러인 경우
+                        if "503" in error_msg or "UNAVAILABLE" in error_msg:
+                            if attempt < max_retries - 1:
+                                st.warning(f"서버에 접속자가 많아 잠시 대기 후 재시도합니다... ({attempt + 1}/{max_retries})")
+                                time.sleep(3)  # 3초 대기 후 다시 시도
+                            else:
+                                st.error("현재 구글 AI 서버 이용량이 너무 많습니다. 잠시 후 버튼을 다시 눌러주세요.")
+                        # 다른 종류의 에러인 경우 바로 출력하고 종료
+                        else:
+                            st.error(f"AI 브리핑 생성 중 오류가 발생했습니다: {e}")
+                            break
     else:
         st.info("Streamlit Cloud 설정(Secrets)에서 GEMINI_API_KEY를 추가해주세요.")
