@@ -8,10 +8,11 @@ import ta
 import google.generativeai as genai
 
 # --- 0. Gemini AI 설정 ---
-GEMINI_API_KEY = AQ.Ab8RN6LCuzeVpFq2twhVD4-96Fc06eCeaTgU1qCuPVKRn8EJuw
-if GEMINI_API_KEY != AQ.Ab8RN6LCuzeVpFq2twhVD4-96Fc06eCeaTgU1qCuPVKRn8EJuw:
-    genai.configure(api_key=GEMINI_API_KEY)
-    gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+GEMINI_API_KEY = "AQ.Ab8RN6LCuzeVpFq2twhVD4-96Fc06eCeaTgU1qCuPVKRn8EJuw"
+
+# 복잡한 if문 없이 바로 AI를 켭니다.
+genai.configure(api_key=GEMINI_API_KEY)
+gemini_model = genai.GenerativeModel('gemini-1.5-flash')
 
 # --- 1. 페이지 설정 및 Apple iOS 스타일 CSS ---
 st.set_page_config(page_title="Alpha Terminal iOS", layout="wide")
