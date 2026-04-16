@@ -7,6 +7,7 @@ import numpy as np
 import ta
 from google import genai
 import time
+from streamlit_autorefresh import st_autorefresh # 자동 새로고침 라이브러리
 
 # --- 0. Gemini AI 보안 설정 ---
 if "GEMINI_API_KEY" in st.secrets:
@@ -45,6 +46,9 @@ US_STOCKS = {
 # --- 2. Bloomberg/IB 스타일 CSS ---
 st.set_page_config(page_title="Alpha Terminal IB", layout="wide")
 
+# 5분(300초)마다 자동으로 페이지를 리프레시합니다.
+st_autorefresh(interval=300000, key="datarefresh")
+
 st.markdown("""
 <style>
     @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
@@ -66,17 +70,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. 정밀 퀀트 엔진 (nan 방지 로직 포함) ---
-@st.cache_data(ttl=3600)
+# --- 3. 정밀 퀀트 엔진 (nan 방지 로직 강화) ---
+@st.cache_data(ttl=300) # 자동 새로고침 주기에 맞춰 캐시 수명 조정
 def analyze_stock_quant(ticker):
     try:
-        df = yf.download(ticker, period="1y", progress=False)
+        # 데이터 호출 시 결측치 행을 즉시 드랍하여 nan 발생 차단
+        df = yf.download(ticker, period="1y", progress=False).dropna()
         if df.empty or len(df) < 50: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
-        
-        # nan 방지: 모든 결측치 행 제거 및 가장 최근 유효 데이터 선택
-        df = df.dropna()
-        if df.empty: return None
         
         bb = ta.volatility.BollingerBands(df['Close'])
         rsi = ta.momentum.rsi(df['Close']).iloc[-1]
@@ -86,11 +87,10 @@ def analyze_stock_quant(ticker):
         curr_price = df['Close'].iloc[-1]
         bb_h, bb_l = bb.bollinger_hband().iloc[-1], bb.bollinger_lband().iloc[-1]
         
-        # 분모가 0이 되는 현상 방지
-        denom = bb_h - bb_l
-        bb_pos = (curr_price - bb_l) / denom * 100 if denom != 0 else 50.0
+        # 분모 0 체크 및 가격 편차 계산
+        bb_pos = (curr_price - bb_l) / (bb_h - bb_l) * 100 if (bb_h - bb_l) != 0 else 50.0
         
-        # 스코어링 로직
+        # Decision Logic (매수/매도 방향성 먼저 확정)
         score = 50.0
         if rsi < 35: score += 20
         elif rsi > 65: score -= 20
@@ -99,18 +99,21 @@ def analyze_stock_quant(ticker):
         if bb_pos < 20: score += 15
         elif bb_pos > 80: score -= 15
         
-        final_score = int(max(0, min(100, score)))
-        
-        if final_score >= 75: verdict, color = "STRONG BUY (강력 매수)", "#00873C"
-        elif final_score >= 60: verdict, color = "ACCUMULATE (분할 매수)", "#62B236"
-        elif final_score >= 45: verdict, color = "HOLD (관망/유지)", "#8E8E93"
-        elif final_score >= 30: verdict, color = "REDUCE (비중 축소)", "#FF9500"
-        else: verdict, color = "SELL (강력 매도)", "#FF3B30"
+        # 10단위 확신도(Confidence) 계산
+        if score > 52:
+            verdict, confidence = "BUY (매수 권장)", int((score - 50) * 2.5 // 10 * 10)
+            color = "#00873C"
+        elif score < 48:
+            verdict, confidence = "SELL (매도 권장)", int((50 - score) * 2.5 // 10 * 10)
+            color = "#FF3B30"
+        else:
+            verdict, confidence = "HOLD (중립 관망)", 50
+            color = "#8E8E93"
             
         return {
             "Ticker": ticker, "Price": curr_price, "RSI": round(rsi, 2),
             "MACD_Status": "Bullish Cross (상승 돌파)" if m_val > s_val else "Bearish Cross (하락 돌파)",
-            "BB_Pos": round(bb_pos, 1), "Score": final_score, "Verdict": verdict, "Color": color, "df": df
+            "BB_Pos": round(bb_pos, 1), "Verdict": verdict, "Confidence": min(100, confidence), "Color": color, "df": df
         }
     except: return None
 
@@ -139,28 +142,23 @@ with tab1:
         data = analyze_stock_quant(tk)
         if data:
             with p_cols[i % 2]:
-                # 지표 해석 문장 생성
-                rsi_val = data['RSI']
-                rsi_msg = f"RSI(심리 강도)가 {rsi_val}입니다. 이는 현재 시장 심리가 {'과열권에 진입하여 조정 가능성이 높음' if rsi_val > 70 else '침체권으로 저가 매수세 유입이 기대됨' if rsi_val < 30 else '중립적이며 안정적인 흐름을 유지함'}을 의미합니다."
-                
-                macd_status = data['MACD_Status']
-                macd_msg = f"MACD 추세가 {macd_status} 상태입니다. 현재 주가 모멘텀이 {'상방으로 강화되고 있어 추세 추종이 유리함' if 'Bullish' in macd_status else '하방 압력이 거세지고 있어 신중한 접근이 필요함'}을 의미합니다."
-                
-                bb_pos = data['BB_Pos']
-                bb_msg = f"BB(가격 편차 위치)가 {bb_pos}%입니다. 주가가 {'통계적 변동 범위 상단에 도달하여 평균 회귀 가능성이 존재함' if bb_pos > 85 else '통계적 변동 범위 하단에 위치하여 반등 확률이 높아짐' if bb_pos < 15 else '박스권 내 안정적인 가격 경로를 형성하고 있음'}을 의미합니다."
+                # 문장형 피드백 생성
+                rsi_msg = f"RSI(심리 강도)가 {data['RSI']}입니다. 이는 현재 시장 참여자들의 심리가 {'과열권에 진입하여 단기 조정 가능성이 높음' if data['RSI'] > 65 else '공포 구간에 위치하여 기술적 반등 확률이 높아짐' if data['RSI'] < 35 else '안정적인 중립 상태를 유지하고 있음'}을 의미합니다."
+                macd_msg = f"MACD 모멘텀이 {data['MACD_Status']} 상태입니다. 현재 주가의 상승 동력이 {'확대되며 추세가 강화되고 있음' if 'Bullish' in data['MACD_Status'] else '둔화되며 하방 압력이 점증하고 있음'}을 의미합니다."
+                bb_msg = f"BB(가격 편차 위치)가 {data['BB_Pos']}%입니다. 가격이 {'통계적 변동 범위 상단에 이격되어 평균 회귀가 예상됨' if data['BB_Pos'] > 85 else '통계적 변동 범위 하단에 도달하여 하방 지지력이 확인됨' if data['BB_Pos'] < 15 else '박스권 내에서 정상적인 가격 경로를 형성 중임'}을 의미합니다."
 
                 st.markdown(f"""
                 <div class="ib-card">
-                    <div class="decision-label">{name} ({tk}) / Technical Status (기술적 상태)</div>
-                    <div class="decision-value" style="color: {data['Color']};">{data['Verdict']}</div>
+                    <div class="decision-label">{name} ({tk}) / Intelligence Report</div>
+                    <div class="decision-value" style="color: {data['Color']};">{data['Verdict']} (확신도: {data['Confidence']}%)</div>
                     <table class="data-table">
                         <tr><td>Current Price (현재 주가)</td><td style="text-align:right; font-weight:700;">{data['Price']:,.2f}</td></tr>
                         <tr><td>RSI (심리 강도)</td><td style="text-align:right;">{data['RSI']}</td></tr>
                         <tr><td>MACD Momentum (추세 모멘텀)</td><td style="text-align:right;">{data['MACD_Status']}</td></tr>
                         <tr><td>BB Standard Dev. Pos (가격 편차 위치)</td><td style="text-align:right;">{data['BB_Pos']}%</td></tr>
                     </table>
-                    <div style="margin-top: 20px; font-size: 13px; color: #495057; line-height: 1.6; background: #F8F9FA; padding: 15px; border-radius: 6px;">
-                        <b>📉 Indicator Analysis (지표 해석):</b><br>
+                    <div style="margin-top: 20px; font-size: 13px; color: #495057; line-height: 1.7; background: #F8F9FA; padding: 15px; border-radius: 6px;">
+                        <b>📉 Logic-Based Insight (논리적 분석):</b><br>
                         • {rsi_msg}<br>
                         • {macd_msg}<br>
                         • {bb_msg}
@@ -168,6 +166,7 @@ with tab1:
                 </div>
                 """, unsafe_allow_html=True)
                 
+                # 차트 출력 (범례 명확화)
                 df_chart = data['df'][-120:]
                 fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_heights=[0.5, 0.25, 0.25])
                 
@@ -189,7 +188,7 @@ with tab1:
                 fig.update_layout(height=650, template="plotly_white", margin=dict(l=0,r=0,t=0,b=0), xaxis_rangeslider_visible=False, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                 st.plotly_chart(fig, use_container_width=True)
                 
-                if st.button(f"Delete Asset {name}", key=f"del_{tk}"):
+                if st.button(f"Close Asset {name}", key=f"del_{tk}"):
                     del st.session_state.my_portfolio[name]
                     st.rerun()
 
@@ -202,15 +201,15 @@ with tab2:
         for t, n in stocks.items():
             d = analyze_stock_quant(t)
             if d: res.append({
-                "Asset (종목)": n, "Ticker (티커)": t, "Score (퀀트점수)": d['Score'], 
-                "Verdict (의견)": d['Verdict'], "RSI": d['RSI']
+                "Asset (종목)": n, "Ticker (티커)": t, "Confidence (확신도)": d['Confidence'], 
+                "Verdict (의견)": d['Verdict'], "RSI (심리강도)": d['RSI']
             })
         return pd.DataFrame(res)
 
     c1, c2 = st.columns(2)
     column_cfg = {
-        "Score (퀀트점수)": st.column_config.ProgressColumn(
-            "Quant Score (점수)", min_value=0, max_value=100, format="%d"
+        "Confidence (확신도)": st.column_config.ProgressColumn(
+            "Confidence Level (%)", min_value=0, max_value=100, format="%d"
         )
     }
 
@@ -227,8 +226,8 @@ with tab3:
     if gemini_client:
         if st.button("Generate Senior Analyst Briefing (리포트 생성)"):
             with st.spinner("Accessing Terminal Meta-Data..."):
-                prompt = "당신은 골드만삭스의 시니어 애널리스트입니다. 현재 마켓의 기술적 지표들을 기반으로, 연세대 경영/공학 대학생 수준에서 논리적으로 납득 가능한 투자 대응 전략 5줄을 마크다운 형식으로 작성하세요."
+                prompt = "당신은 월스트리트의 시니어 애널리스트입니다. 현재 마켓의 주요 기술적 지표들을 기반으로, 연세대 경영/공학 대학생 수준에서 논리적으로 납득 가능한 투자 대응 전략 5줄을 마크다운 형식으로 작성하세요."
                 try:
                     res = gemini_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-                    st.markdown(f"<div style='background-color: #F8F9FA; padding: 25px; border-left: 5px solid #00529B; line-height: 1.8;'>{res.text}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='background-color: #FFFFFF; padding: 25px; border-left: 5px solid #00529B; line-height: 1.8; box-shadow: 0 2px 5px rgba(0,0,0,0.05);'>{res.text}</div>", unsafe_allow_html=True)
                 except Exception as e: st.error(f"Error: {e}")
