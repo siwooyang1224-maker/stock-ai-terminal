@@ -8,32 +8,28 @@ import ta
 import google.generativeai as genai
 
 # --- 0. Gemini AI 설정 ---
-GEMINI_API_KEY = "AQ.Ab8RN6LCuzeVpFq2twhVD4-96Fc06eCeaTgU1qCuPVKRn8EJuw"
+# 주의: 새로 발급받은 API Key를 아래 따옴표 안에 넣어주세요!
+GEMINI_API_KEY = "새로_발급받은_API_KEY를_여기에_넣어주세요" 
 
-# 복잡한 if문 없이 바로 AI를 켭니다.
-genai.configure(api_key=GEMINI_API_KEY)
-gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+if GEMINI_API_KEY != "새로_발급받은_API_KEY를_여기에_넣어주세요":
+    genai.configure(api_key=GEMINI_API_KEY)
+    gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+else:
+    gemini_model = None
 
 # --- 1. 페이지 설정 및 Apple iOS 스타일 CSS ---
 st.set_page_config(page_title="Alpha Terminal iOS", layout="wide")
 
 st.markdown("""
 <style>
-    /* 폰트 및 배경 설정 (iOS 스타일) */
+    /* 폰트 및 배경 설정 */
     @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
-    * {
-        font-family: '-apple-system', 'BlinkMacSystemFont', 'Pretendard', sans-serif !important;
-    }
-    .stApp {
-        background-color: #F2F2F7; /* iOS 기본 백그라운드 그레이 */
-    }
-    .block-container {
-        padding-top: 3rem; 
-        max-width: 1400px;
-    }
+    * {font-family: '-apple-system', 'BlinkMacSystemFont', 'Pretendard', sans-serif !important;}
+    .stApp {background-color: #F2F2F7;}
+    .block-container {padding-top: 3rem; max-width: 1400px;}
     #MainMenu, footer, header {visibility: hidden;}
 
-    /* iOS 위젯 스타일 카드 (Metric) */
+    /* iOS 위젯 스타일 카드 */
     div[data-testid="metric-container"] {
         background-color: #FFFFFF;
         border-radius: 24px;
@@ -41,68 +37,19 @@ st.markdown("""
         box-shadow: 0 8px 24px rgba(0,0,0,0.04);
         border: none;
     }
-    div[data-testid="stMetricValue"] {
-        font-size: 2.2rem; 
-        font-weight: 700; 
-        color: #1C1C1E;
-        letter-spacing: -0.5px;
-    }
-    div[data-testid="stMetricLabel"] {
-        font-size: 1rem;
-        color: #8E8E93;
-        font-weight: 500;
-    }
+    div[data-testid="stMetricValue"] {font-size: 2.2rem; font-weight: 700; color: #1C1C1E; letter-spacing: -0.5px;}
+    div[data-testid="stMetricLabel"] {font-size: 1rem; color: #8E8E93; font-weight: 500;}
 
-    /* 탭 디자인 (iOS Segmented Control 스타일) */
-    .stTabs [data-baseweb="tab-list"] {
-        background-color: #E5E5EA;
-        border-radius: 12px;
-        padding: 4px;
-        gap: 2px;
-        border-bottom: none;
-    }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 10px;
-        padding: 8px 16px;
-        color: #8E8E93;
-        font-weight: 600;
-        border: none;
-        background-color: transparent;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #FFFFFF !important;
-        color: #000000 !important;
-        box-shadow: 0 3px 8px rgba(0,0,0,0.12), 0 3px 1px rgba(0,0,0,0.04);
-    }
+    /* 탭 디자인 */
+    .stTabs [data-baseweb="tab-list"] {background-color: #E5E5EA; border-radius: 12px; padding: 4px; gap: 2px; border-bottom: none;}
+    .stTabs [data-baseweb="tab"] {border-radius: 10px; padding: 8px 16px; color: #8E8E93; font-weight: 600; border: none; background-color: transparent;}
+    .stTabs [aria-selected="true"] {background-color: #FFFFFF !important; color: #000000 !important; box-shadow: 0 3px 8px rgba(0,0,0,0.12), 0 3px 1px rgba(0,0,0,0.04);}
     
-    /* 데이터프레임 (표) 모서리 둥글게 */
-    .stDataFrame {
-        background-color: #FFFFFF;
-        border-radius: 20px;
-        padding: 10px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.03);
-    }
-    
-    /* 버튼 스타일 (iOS 블루) */
-    .stButton>button {
-        background-color: #007AFF;
-        color: white;
-        border-radius: 14px;
-        border: none;
-        font-weight: 600;
-        padding: 10px;
-    }
-    .stButton>button:hover {
-        background-color: #0056b3;
-        color: white;
-    }
-    
-    /* 입력창 스타일 */
-    .stTextInput input {
-        border-radius: 12px;
-        border: 1px solid #E5E5EA;
-        padding: 12px;
-    }
+    /* 데이터프레임 및 버튼 */
+    .stDataFrame {background-color: #FFFFFF; border-radius: 20px; padding: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.03);}
+    .stButton>button {background-color: #007AFF; color: white; border-radius: 14px; border: none; font-weight: 600; padding: 10px;}
+    .stButton>button:hover {background-color: #0056b3; color: white;}
+    .stTextInput input {border-radius: 12px; border: 1px solid #E5E5EA; padding: 12px;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -199,9 +146,27 @@ with tab1:
                     del st.session_state.my_portfolio[name]
                     st.rerun()
                 
-                # 미니멀 차트 (배경 투명화)
-                fig = go.Figure(go.Candlestick(x=data['df'].index[-40:], open=data['df']['Open'][-40:], high=data['df']['High'][-40:], low=data['df']['Low'][-40:], close=data['df']['Close'][-40:]))
-                fig.update_layout(height=200, margin=dict(l=0,r=0,t=0,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', xaxis_rangeslider_visible=False, xaxis_visible=False, yaxis_visible=False)
+                # --- 전문가용 정밀 차트 (격자선 + RSI + 볼린저밴드 부활) ---
+                df_chart = data['df'][-100:]
+                bb_chart = ta.volatility.BollingerBands(df_chart['Close'])
+                bb_h, bb_l = bb_chart.bollinger_hband(), bb_chart.bollinger_lband()
+                rsi_chart = ta.momentum.rsi(df_chart['Close'])
+
+                fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
+                fig.add_trace(go.Candlestick(x=df_chart.index, open=df_chart['Open'], high=df_chart['High'], low=df_chart['Low'], close=df_chart['Close'], name="Price"), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_chart.index, y=bb_h, line=dict(color='rgba(150,150,150,0.5)', width=1), name="BB High"), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_chart.index, y=bb_l, line=dict(color='rgba(150,150,150,0.5)', width=1), fill='tonexty', name="BB Low"), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_chart.index, y=rsi_chart, line=dict(color='#007AFF', width=2), name="RSI"), row=2, col=1)
+                
+                fig.update_layout(
+                    height=350, margin=dict(l=20, r=20, t=10, b=10),
+                    plot_bgcolor='rgba(255,255,255,1)', paper_bgcolor='rgba(0,0,0,0)',
+                    xaxis_rangeslider_visible=False, showlegend=False
+                )
+                for row in [1, 2]:
+                    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(200,200,200,0.3)', row=row, col=1)
+                    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(200,200,200,0.3)', row=row, col=1)
+
                 st.plotly_chart(fig, use_container_width=True)
 
 with tab2:
@@ -229,7 +194,13 @@ with tab2:
 
 with tab3:
     st.markdown("<h3 style='color: #1C1C1E; font-weight: 700;'>Gemini 데일리 브리핑</h3>", unsafe_allow_html=True)
-    if GEMINI_API_KEY == "YOUR_API_KEY_HERE":
-        st.info("API Key를 입력하여 실시간 브리핑을 활성화하세요.")
+    if gemini_model:
+        # 실제 뉴스/데이터 연동 시 여기에 텍스트를 공급합니다.
+        market_news = "최근 기술주 전반에 조정이 오고 있으며, 반도체 섹터의 변동성이 큽니다. 금리 인하 기대감은 다소 후퇴했습니다."
+        try:
+            res = gemini_model.generate_content(f"투자 전략가로서 다음 시장 상황을 분석하고 3줄로 요약해줘: {market_news}")
+            st.success(res.text)
+        except Exception as e:
+            st.error(f"AI 브리핑 생성 중 오류가 발생했습니다: {e}")
     else:
-        st.success("시장 상황 요약 데이터를 수신했습니다.")
+        st.info("코드 12번째 줄에 API Key를 입력하시면 실시간 AI 브리핑이 활성화됩니다.")
