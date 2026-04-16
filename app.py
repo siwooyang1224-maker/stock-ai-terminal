@@ -73,8 +73,6 @@ st.markdown("""
     .decision-prob { font-size: 15px; font-weight: 600; padding: 4px 10px; border-radius: 6px; }
     .data-table { width: 100%; font-size: 13.5px; margin-top: 15px; border-collapse: collapse; }
     .data-table td { padding: 10px 0; border-bottom: 1px solid #F1F3F5; }
-    
-    /* Expander 스타일 수정 (오류 방지) */
     .streamlit-expanderHeader { font-weight: 700 !important; color: #1C1C1E !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -138,15 +136,15 @@ def analyze_stock_quant(ticker):
         }
     except: return None
 
-# --- 매크로 데이터 패치 함수 (4대 핵심 거시 지표) ---
+# --- 매크로 데이터 패치 함수 ---
 @st.cache_data(ttl=600)
 def get_macro_data():
     try:
         tickers = {
-            "VIX": "^VIX",         # 공포 지수
-            "TNX": "^TNX",         # 미 10년물 국채 (할인율)
-            "DXY": "DX-Y.NYB",     # 달러 인덱스 (글로벌 유동성/환율)
-            "BTC": "BTC-USD"       # 비트코인 (리스크 선호도 선행 지표)
+            "VIX": "^VIX",         
+            "TNX": "^TNX",         
+            "DXY": "DX-Y.NYB",     
+            "BTC": "BTC-USD"       
         }
         data = {}
         for name, tk in tickers.items():
@@ -188,7 +186,6 @@ with tab1:
                 bb_msg = f"BB(가격 편차 위치)가 {data['BB_Pos']}%입니다. 가격이 통계적 밴드의 {'상단을 뚫어 단기 조정이 예상됨' if data['BB_Pos'] > 85 else '하단에 닿아 기술적 반등이 기대됨' if data['BB_Pos'] < 15 else '정상 범위 안에서 움직임'}을 시사합니다."
                 adx_msg = f"ADX(추세 강도)가 {data['ADX']}입니다. 25를 넘으면 추세가 강함을 뜻하며, 현재 {'명확한 방향성을 가지고 뻗어나가는 중' if data['ADX'] > 25 else '방향성이 뚜렷하지 않은 횡보장세'}입니다."
                 mfi_msg = f"MFI(자금 유입)가 {data['MFI']}입니다. 거래량이 실린 스마트 머니가 {'강하게 유입되고 있어 추세 신뢰도가 높음' if data['MFI'] > 60 else '점차 빠져나가고 있어 보수적 접근 필요' if data['MFI'] < 40 else '균형을 이루고 있음'}을 의미합니다."
-                
                 atr_pct = data['ATR_Pct']
                 if atr_pct >= 5.0: atr_msg = f"ATR(변동성)은 주가의 **{atr_pct}%**에 달하는 **[고변동성 종목]**입니다. 철저한 손절매 등 리스크 관리가 필수적입니다."
                 elif atr_pct >= 2.0: atr_msg = f"ATR(변동성)은 주가의 **{atr_pct}%** 수준입니다. 일반적인 주식의 **[정상 변동폭]** 내에서 움직이고 있습니다."
@@ -222,11 +219,10 @@ with tab1:
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # 4단 차트 출력
                 df_chart = data['df'][-120:]
                 fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.4, 0.2, 0.2, 0.2])
                 
-                fig.add_trace(go.Candlestick(x=df_chart.index, open=df_chart['Open'], high=df_chart['High'], low=df_chart['Low'], close=df_chart['Close'], name="Price (주가)"), row=1, col=1)
+                fig.add_trace(go.Candlestick(x=df_chart.index, open=df_chart['Open'], high=df_chart['High'], low=df_chart['Low'], close=df_chart['Close'], name="Price"), row=1, col=1)
                 bb_ta = ta.volatility.BollingerBands(df_chart['Close'])
                 fig.add_trace(go.Scatter(x=df_chart.index, y=bb_ta.bollinger_hband(), line=dict(color='rgba(0,82,155,0.4)', width=1), name="BB Upper"), row=1, col=1)
                 fig.add_trace(go.Scatter(x=df_chart.index, y=bb_ta.bollinger_lband(), line=dict(color='rgba(0,82,155,0.4)', width=1), fill='tonexty', name="BB Lower"), row=1, col=1)
@@ -281,12 +277,12 @@ with tab2:
         st.markdown("🇺🇸 **S&P 500 & NASDAQ Top 50**")
         st.dataframe(get_screen_data(US_STOCKS), use_container_width=True, hide_index=True, column_config=column_cfg)
 
-# [탭 3: 매크로 및 정성 분석 (토큰 프리)]
+# [탭 3: 매크로 및 정성 분석]
 with tab3:
     st.markdown("### 🏛️ Macro & Qualitative Intelligence")
-    st.info("💡 거시 경제 4대 핵심 지표 및 내 포트폴리오 종목의 최신 글로벌 뉴스를 실시간으로 제공합니다.")
+    st.info("💡 숫자(Quant)가 타이밍을 잡는다면, 이벤트(Qualitative)는 추세를 만듭니다. 매크로와 정성 분석을 결합하세요.")
     
-    # 1. 매크로 4대 지표 대시보드
+    # 1. 매크로 4대 지표
     st.markdown("#### 🌐 Core Macro Indicators (실시간 거시 지표)")
     macro = get_macro_data()
     if macro:
@@ -294,7 +290,6 @@ with tab3:
         
         def render_macro_card(col, title, val, diff, unit="", color_invert=False):
             with col:
-                # 공포/금리(VIX, TNX)는 오르면 Red, 비트코인/달러는 상황에 따라 다르나 직관성을 위해 등락 표기
                 if color_invert: diff_color = "green" if diff > 0 else "red"
                 else: diff_color = "red" if diff > 0 else "green"
                 
@@ -307,41 +302,29 @@ with tab3:
                 """, unsafe_allow_html=True)
 
         render_macro_card(c_mac1, "VIX (공포 지수)", macro['VIX']['val'], macro['VIX']['diff'])
-        render_macro_card(c_mac2, "US 10-Yr (미 10년물 국채)", macro['TNX']['val'], macro['TNX']['diff'], unit="%")
+        render_macro_card(c_mac2, "US 10-Yr (국채 금리)", macro['TNX']['val'], macro['TNX']['diff'], unit="%")
         render_macro_card(c_mac3, "DXY (달러 인덱스)", macro['DXY']['val'], macro['DXY']['diff'])
-        render_macro_card(c_mac4, "BTC (비트코인/위험자산 선행)", macro['BTC']['val'], macro['BTC']['diff'], unit="$", color_invert=True)
-
-        st.markdown("""
-        <div style="padding: 15px; font-size: 13px; color: #495057; line-height: 1.7; background-color: #F8F9FA; border-radius: 8px;">
-            <b>📌 거시 지표 분석 가이드 (Aggressive Growth 투자자 관점):</b><br>
-            • <b>VIX (공포 지수)</b>: 20을 넘어가면 시장의 패닉이 시작됨을 의미합니다. 급등 시 주식 비중을 줄이세요.<br>
-            • <b>US 10-Yr (국채 금리)</b>: 기술주/성장주의 밸류에이션(할인율)에 직격탄입니다. 금리가 오르면 성장주는 하방 압력을 받습니다.<br>
-            • <b>DXY (달러 인덱스)</b>: 달러 강세는 미국 외 시장(한국 등 신흥국)의 외국인 자금 이탈을 유발하는 악재입니다.<br>
-            • <b>BTC (비트코인)</b>: 글로벌 시장의 '리스크 온(Risk-on)' 즉, 위험자산 선호도를 가장 먼저 보여주는 유동성 선행 지표입니다.
-        </div>
-        """, unsafe_allow_html=True)
+        render_macro_card(c_mac4, "BTC (비트코인/선행)", macro['BTC']['val'], macro['BTC']['diff'], unit="$", color_invert=True)
             
     st.markdown("---")
     
-    # 2. 내 포트폴리오 뉴스 피드 (안전한 파싱 로직 적용)
-    st.markdown("#### 📰 Portfolio News Feed (내 종목 최신 이벤트)")
+    # 2. 내 포트폴리오 뉴스 피드 (Expander 제목 특수문자 제거 버그 수정)
+    st.markdown("#### 📰 Portfolio News Feed (내 종목 최신 뉴스)")
     news_cols = st.columns(2)
     for i, (name, tk) in enumerate(st.session_state.my_portfolio.items()):
         with news_cols[i % 2]:
-            with st.expander(f"[{name}] 주요 뉴스 확인", expanded=True):
+            # 특수문자, 괄호 등 충돌을 일으키는 요소를 뺀 순수 텍스트만 사용
+            with st.expander(f"{name} 최신 뉴스 확인", expanded=True):
                 try:
                     stock_news = yf.Ticker(tk).news
                     valid_news_count = 0
                     
-                    # Yahoo API 응답이 리스트 형태일 때 안전하게 추출
                     if stock_news and isinstance(stock_news, list):
                         for n in stock_news:
-                            # 야후 파이낸스의 변동성 높은 JSON 구조 대응 (get 메서드 및 다중 탐색)
                             title = n.get('title') or n.get('content', {}).get('title')
                             publisher = n.get('publisher') or n.get('content', {}).get('provider', {}).get('displayName')
                             link = n.get('link') or n.get('content', {}).get('clickThroughUrl', {}).get('url')
                             
-                            # 제목과 링크가 모두 존재하는 유효한 뉴스만 출력
                             if title and link:
                                 st.markdown(f"""
                                 <div style="margin-bottom: 12px; font-size: 13.5px;">
@@ -351,24 +334,41 @@ with tab3:
                                 """, unsafe_allow_html=True)
                                 valid_news_count += 1
                                 
-                            if valid_news_count >= 4: # 최대 4개까지만
+                            if valid_news_count >= 4:
                                 break
                                 
                     if valid_news_count == 0:
-                        st.info("해당 종목의 최근 글로벌 영문 뉴스 데이터가 없습니다. (한국 종목은 지원되지 않을 수 있습니다)")
-                        
+                        st.info("최근 영문 송고 뉴스가 없습니다.")
                 except Exception as e:
                     st.warning("뉴스 데이터를 불러오는 중 오류가 발생했습니다.")
 
     st.markdown("---")
     
-    # 3. AI 심층 리서치
-    st.markdown("#### 🤖 AI Senior Analyst (선택적 심층 브리핑)")
-    if gemini_client:
-        if st.button("Generate Senior Analyst Briefing (토큰 소모)"):
-            with st.spinner("Accessing Terminal Meta-Data..."):
-                prompt = "당신은 월스트리트의 시니어 애널리스트입니다. 현재 마켓의 거시경제 흐름과 주요 기술적 지표들을 기반으로, 연세대 경영/공학 대학생 수준에서 논리적으로 납득 가능한 투자 대응 전략 5줄을 마크다운 형식으로 작성하세요."
-                try:
-                    res = gemini_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-                    st.markdown(f"<div style='background-color: #FFFFFF; padding: 25px; border-left: 5px solid #00529B; line-height: 1.8; box-shadow: 0 2px 5px rgba(0,0,0,0.05);'>{res.text}</div>", unsafe_allow_html=True)
-                except Exception as e: st.error(f"Error (토큰 제한 발생): {e}")
+    # 3. LLM API 우회용: 정성 분석 완벽 프롬프트 생성기
+    st.markdown("#### 🤖 AI 정성 분석 프롬프트 생성기 (Token Free)")
+    st.markdown("<p style='font-size: 13.5px; color: #495057;'>API 연결 오류나 토큰 부족 시, 아래의 <b>맞춤형 프롬프트</b>를 복사하여 ChatGPT나 Gemini 웹에 직접 붙여넣으세요. 현재 시장 데이터가 자동 반영되어 완벽한 정성 분석 리포트를 받아볼 수 있습니다.</p>", unsafe_allow_html=True)
+    
+    # 현재 포트폴리오 문자열 만들기
+    port_str = ", ".join([f"{k}({v})" for k, v in st.session_state.my_portfolio.items()])
+    macro_str = f"VIX(공포지수): {macro['VIX']['val']:.2f}, US 10-Yr(국채금리): {macro['TNX']['val']:.2f}%, DXY(달러인덱스): {macro['DXY']['val']:.2f}, BTC(비트코인): ${macro['BTC']['val']:,.0f}" if macro else "데이터 로딩 실패"
+    
+    generated_prompt = f"""당신은 월스트리트 최고 수준의 시니어 매크로 및 에쿼티 전략가입니다. 
+저는 한국과 미국 주식을 운용하는 공격적 성장주 투자자(Aggressive Growth Investor)입니다. 
+아래의 실시간 거시 경제 지표와 내 포트폴리오 종목들을 바탕으로 심층적인 정성 분석(Qualitative Analysis) 리포트를 작성해주세요.
+
+[실시간 매크로 지표 상태]
+{macro_str}
+
+[내 포트폴리오 종목]
+{port_str}
+
+[분석 필수 포함 항목 - 각 항목별로 깊이 있는 인사이트 제공]
+1. 거시경제(Macro) 및 통화정책: 현재 국채금리와 달러 인덱스 흐름이 내 포트폴리오(성장주 중심) 밸류에이션에 미치는 영향은? 파월 등 연준 위원들의 최근 발언 스탠스는 어떠한가?
+2. 지정학적 리스크(Geopolitics): 현재 진행 중인 중동 분쟁, 미중 갈등, 미국 대선 등 굵직한 지정학적 요인이 위 종목들의 공급망(반도체, AI 등)에 미칠 잠재적 리스크는?
+3. 기업 리더 동향(Executive Actions): 젠슨 황, 일론 머스크 등 내 포트폴리오 관련 핵심 기업인들의 최근 중대한 결정이나 트윗, 내부자 매도/매수 동향이 있는가?
+4. 기업별 핵심 모멘텀: 위 종목들에 대해 실적 발표(어닝), M&A, 신제품 출시 등 가격을 위아래로 크게 흔들 수 있는 강력한 정성적 이벤트가 있는가?
+
+위 항목들을 종합하여, 퀀트(기술적 지표)의 맹점을 보완해 줄 수 있는 통찰력 있는 전술(리스크 대비 및 기회 포착)을 5줄 이내의 핵심 요약과 함께 제시해주세요."""
+
+    st.code(generated_prompt, language="markdown")
+    st.info("👆 위 박스 우측 상단의 복사(Copy) 아이콘을 눌러 챗봇에 붙여넣기 하세요.")
