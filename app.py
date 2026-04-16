@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 import ta
 from google import genai
-import time  # 추가됨: 503 에러 발생 시 대기 시간을 주기 위한 라이브러리
+import time
 
 # --- 0. Gemini AI 보안 설정 (최신 Client 방식 적용) ---
 if "GEMINI_API_KEY" in st.secrets:
@@ -214,36 +214,34 @@ with tab2:
         st.markdown("<h5 style='color: #1C1C1E;'>🇺🇸 S&P 500 & NASDAQ 50</h5>", unsafe_allow_html=True)
         st.dataframe(get_df(US_STOCKS), width="stretch", hide_index=True, column_config={"AI 점수": st.column_config.ProgressColumn(min_value=0, max_value=100)})
 
-# [탭 3: AI 브리핑 - 수정된 부분]
+# [탭 3: AI 브리핑]
 with tab3:
     st.markdown("<h3 style='color: #1C1C1E; font-weight: 700;'>Gemini 데일리 브리핑</h3>", unsafe_allow_html=True)
     if gemini_client:
         market_news = "최근 기술주 전반에 조정이 오고 있으며, 반도체 섹터의 변동성이 큽니다. 금리 인하 기대감은 다소 후퇴했습니다."
         
-        # 버튼을 눌렀을 때만 API를 호출하도록 변경
         if st.button("🔄 AI 브리핑 생성 / 재시도"):
             with st.spinner("AI가 시장 상황을 분석하고 있습니다... (서버 혼잡 시 약간의 시간이 소요될 수 있습니다)"):
-                max_retries = 3  # 최대 3번까지 재시도
+                max_retries = 3
                 
                 for attempt in range(max_retries):
                     try:
+                        # 수정됨: 최신 3세대 모델 적용
                         res = gemini_client.models.generate_content(
-                            model='gemini-2.5-flash',
+                            model='gemini-3-flash', 
                             contents=f"투자 전략가로서 다음 시장 상황을 분석하고 비전공자도 이해할 수 있게 3줄로 요약해줘: {market_news}"
                         )
                         st.success(res.text)
-                        break  # 성공하면 반복문(재시도) 탈출
+                        break 
                         
                     except Exception as e:
                         error_msg = str(e)
-                        # 503 과부하 에러인 경우
                         if "503" in error_msg or "UNAVAILABLE" in error_msg:
                             if attempt < max_retries - 1:
                                 st.warning(f"서버에 접속자가 많아 잠시 대기 후 재시도합니다... ({attempt + 1}/{max_retries})")
-                                time.sleep(3)  # 3초 대기 후 다시 시도
+                                time.sleep(3)
                             else:
                                 st.error("현재 구글 AI 서버 이용량이 너무 많습니다. 잠시 후 버튼을 다시 눌러주세요.")
-                        # 다른 종류의 에러인 경우 바로 출력하고 종료
                         else:
                             st.error(f"AI 브리핑 생성 중 오류가 발생했습니다: {e}")
                             break
