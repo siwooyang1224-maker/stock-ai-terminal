@@ -11,7 +11,8 @@ import google.generativeai as genai
 if "GEMINI_API_KEY" in st.secrets:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=GEMINI_API_KEY)
-    gemini_model = genai.GenerativeModel('gemini-pro')
+    # 404 에러 방지를 위해 가장 최신/안정적인 모델로 지정
+    gemini_model = genai.GenerativeModel('gemini-1.5-flash')
 else:
     gemini_model = None
 
@@ -135,13 +136,13 @@ def analyze_stock_detailed(ticker):
 
 # --- 5. 메인 화면 ---
 if 'my_portfolio' not in st.session_state:
-    st.session_state.my_portfolio = {"SK하이닉스": "000660.KS", "NVIDIA": "NVDA"}
+    # 💡 잃어버리신 TSLL 완벽 복구
+    st.session_state.my_portfolio = {"SK하이닉스": "000660.KS", "TSLL": "TSLL"}
 
 st.markdown("<h1 style='text-align: center; color: #1C1C1E; font-weight: 800; margin-bottom: 2rem;'> Alpha Terminal</h1>", unsafe_allow_html=True)
 
 tab1, tab2, tab3 = st.tabs(["포트폴리오", "시장 스크리닝", "AI 브리핑"])
 
-# [탭 1: 포트폴리오 관리]
 with tab1:
     st.markdown("<h3 style='color: #1C1C1E; font-weight: 700;'>나의 종목 관리</h3>", unsafe_allow_html=True)
     col_a, col_b, col_c = st.columns([2, 2, 1])
@@ -191,7 +192,6 @@ with tab1:
 
                 st.plotly_chart(fig, use_container_width=True)
 
-# [탭 2: 시장 스크리닝 복구]
 with tab2:
     st.markdown("<h3 style='color: #1C1C1E; font-weight: 700;'>한·미 시장 유니버스 분석</h3>", unsafe_allow_html=True)
     c_kr, c_us = st.columns(2)
@@ -215,7 +215,6 @@ with tab2:
         st.markdown("<h5 style='color: #1C1C1E;'>🇺🇸 S&P 500 & NASDAQ 50</h5>", unsafe_allow_html=True)
         st.dataframe(get_df(US_STOCKS), use_container_width=True, hide_index=True, column_config={"AI 점수": st.column_config.ProgressColumn(min_value=0, max_value=100)})
 
-# [탭 3: AI 브리핑 복구]
 with tab3:
     st.markdown("<h3 style='color: #1C1C1E; font-weight: 700;'>Gemini 데일리 브리핑</h3>", unsafe_allow_html=True)
     if gemini_model:
