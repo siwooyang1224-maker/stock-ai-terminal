@@ -65,14 +65,17 @@ st.markdown("""
         border-radius: 8px;
         padding: 20px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        border-left: 5px solid #D71920;
-        margin-bottom: 20px;
+        border-left: 5px solid #00529B;
+        margin-bottom: 15px;
     }
     .decision-label { font-size: 13px; font-weight: 700; color: #8E8E93; text-transform: uppercase; letter-spacing: 0.5px; }
     .decision-value { font-size: 26px; font-weight: 900; margin: 10px 0; display: flex; align-items: baseline; gap: 8px; }
     .decision-prob { font-size: 15px; font-weight: 600; padding: 4px 10px; border-radius: 6px; }
     .data-table { width: 100%; font-size: 13.5px; margin-top: 15px; border-collapse: collapse; }
     .data-table td { padding: 10px 0; border-bottom: 1px solid #F1F3F5; }
+    
+    /* Expander 스타일 수정 (오류 방지) */
+    .streamlit-expanderHeader { font-weight: 700 !important; color: #1C1C1E !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -135,16 +138,24 @@ def analyze_stock_quant(ticker):
         }
     except: return None
 
-# --- 매크로 데이터 패치 함수 (캐싱으로 속도 최적화) ---
+# --- 매크로 데이터 패치 함수 (4대 핵심 거시 지표) ---
 @st.cache_data(ttl=600)
 def get_macro_data():
     try:
-        vix = yf.Ticker("^VIX").history(period="5d")['Close']
-        tnx = yf.Ticker("^TNX").history(period="5d")['Close']
-        return {
-            "VIX": vix.iloc[-1], "VIX_diff": vix.iloc[-1] - vix.iloc[-2],
-            "TNX": tnx.iloc[-1], "TNX_diff": tnx.iloc[-1] - tnx.iloc[-2]
+        tickers = {
+            "VIX": "^VIX",         # 공포 지수
+            "TNX": "^TNX",         # 미 10년물 국채 (할인율)
+            "DXY": "DX-Y.NYB",     # 달러 인덱스 (글로벌 유동성/환율)
+            "BTC": "BTC-USD"       # 비트코인 (리스크 선호도 선행 지표)
         }
+        data = {}
+        for name, tk in tickers.items():
+            hist = yf.Ticker(tk).history(period="5d")['Close']
+            if not hist.empty and len(hist) >= 2:
+                data[name] = {"val": hist.iloc[-1], "diff": hist.iloc[-1] - hist.iloc[-2]}
+            else:
+                data[name] = {"val": 0.0, "diff": 0.0}
+        return data
     except: return None
 
 # --- 4. 대시보드 메인 ---
@@ -217,26 +228,26 @@ with tab1:
                 
                 fig.add_trace(go.Candlestick(x=df_chart.index, open=df_chart['Open'], high=df_chart['High'], low=df_chart['Low'], close=df_chart['Close'], name="Price (주가)"), row=1, col=1)
                 bb_ta = ta.volatility.BollingerBands(df_chart['Close'])
-                fig.add_trace(go.Scatter(x=df_chart.index, y=bb_ta.bollinger_hband(), line=dict(color='rgba(0,82,155,0.4)', width=1), name="BB Upper (상단)"), row=1, col=1)
-                fig.add_trace(go.Scatter(x=df_chart.index, y=bb_ta.bollinger_lband(), line=dict(color='rgba(0,82,155,0.4)', width=1), fill='tonexty', name="BB Lower (하단)"), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_chart.index, y=bb_ta.bollinger_hband(), line=dict(color='rgba(0,82,155,0.4)', width=1), name="BB Upper"), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_chart.index, y=bb_ta.bollinger_lband(), line=dict(color='rgba(0,82,155,0.4)', width=1), fill='tonexty', name="BB Lower"), row=1, col=1)
                 
                 macd_ta = ta.trend.MACD(df_chart['Close'])
-                fig.add_trace(go.Scatter(x=df_chart.index, y=macd_ta.macd(), line=dict(color='#00529B', width=1.5), name="MACD (추세)"), row=2, col=1)
-                fig.add_trace(go.Scatter(x=df_chart.index, y=macd_ta.macd_signal(), line=dict(color='#FF9500', width=1), name="Signal (신호)"), row=2, col=1)
+                fig.add_trace(go.Scatter(x=df_chart.index, y=macd_ta.macd(), line=dict(color='#00529B', width=1.5), name="MACD"), row=2, col=1)
+                fig.add_trace(go.Scatter(x=df_chart.index, y=macd_ta.macd_signal(), line=dict(color='#FF9500', width=1), name="Signal"), row=2, col=1)
                 fig.add_trace(go.Bar(x=df_chart.index, y=macd_ta.macd_diff(), marker_color='#DEE2E6', name="Histogram"), row=2, col=1)
                 
                 rsi_ta = ta.momentum.rsi(df_chart['Close'])
-                fig.add_trace(go.Scatter(x=df_chart.index, y=rsi_ta, line=dict(color='#AF52DE', width=1.5), name="RSI (심리)"), row=3, col=1)
+                fig.add_trace(go.Scatter(x=df_chart.index, y=rsi_ta, line=dict(color='#AF52DE', width=1.5), name="RSI"), row=3, col=1)
                 fig.add_hline(y=70, line_dash="dot", line_color="#FF3B30", row=3, col=1)
                 fig.add_hline(y=30, line_dash="dot", line_color="#34C759", row=3, col=1)
                 
                 adx_ta = ta.trend.adx(df_chart['High'], df_chart['Low'], df_chart['Close'])
                 mfi_ta = ta.volume.money_flow_index(df_chart['High'], df_chart['Low'], df_chart['Close'], df_chart['Volume'])
-                fig.add_trace(go.Scatter(x=df_chart.index, y=adx_ta, line=dict(color='#D71920', width=1.5), name="ADX (강도)"), row=4, col=1)
-                fig.add_trace(go.Scatter(x=df_chart.index, y=mfi_ta, line=dict(color='#34C759', width=1.5), name="MFI (수급)"), row=4, col=1)
+                fig.add_trace(go.Scatter(x=df_chart.index, y=adx_ta, line=dict(color='#D71920', width=1.5), name="ADX"), row=4, col=1)
+                fig.add_trace(go.Scatter(x=df_chart.index, y=mfi_ta, line=dict(color='#34C759', width=1.5), name="MFI"), row=4, col=1)
                 fig.add_hline(y=25, line_dash="dot", line_color="orange", row=4, col=1) 
 
-                fig.update_layout(height=800, template="plotly_white", margin=dict(l=0,r=0,t=0,b=0), xaxis_rangeslider_visible=False, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                fig.update_layout(height=800, template="plotly_white", margin=dict(l=0,r=0,t=0,b=0), xaxis_rangeslider_visible=False, showlegend=False)
                 st.plotly_chart(fig, use_container_width=True)
                 
                 if st.button(f"Close Asset {name}", key=f"del_{tk}"):
@@ -273,76 +284,85 @@ with tab2:
 # [탭 3: 매크로 및 정성 분석 (토큰 프리)]
 with tab3:
     st.markdown("### 🏛️ Macro & Qualitative Intelligence")
-    st.info("💡 거시 경제 지표 및 내 포트폴리오 종목의 최신 글로벌 뉴스를 API 제한 없이 실시간으로 제공합니다.")
+    st.info("💡 거시 경제 4대 핵심 지표 및 내 포트폴리오 종목의 최신 글로벌 뉴스를 실시간으로 제공합니다.")
     
-    # 1. 매크로 지표 대시보드
+    # 1. 매크로 4대 지표 대시보드
     st.markdown("#### 🌐 Core Macro Indicators (실시간 거시 지표)")
     macro = get_macro_data()
     if macro:
-        c_mac1, c_mac2, c_mac3 = st.columns(3)
-        with c_mac1:
-            vix_color = "red" if macro['VIX_diff'] > 0 else "green"
-            st.markdown(f"""
-            <div class="macro-card">
-                <div style="font-size: 14px; color: #8E8E93; font-weight: 700;">VIX (시장 공포 지수)</div>
-                <div style="font-size: 28px; font-weight: 900; margin-top: 5px;">{macro['VIX']:.2f}</div>
-                <div style="color: {vix_color}; font-weight: 600;">{'+' if macro['VIX_diff'] > 0 else ''}{macro['VIX_diff']:.2f}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with c_mac2:
-            tnx_color = "red" if macro['TNX_diff'] > 0 else "green"
-            st.markdown(f"""
-            <div class="macro-card" style="border-left-color: #007AFF;">
-                <div style="font-size: 14px; color: #8E8E93; font-weight: 700;">US 10-Yr Yield (미 국채 10년물 금리)</div>
-                <div style="font-size: 28px; font-weight: 900; margin-top: 5px;">{macro['TNX']:.3f}%</div>
-                <div style="color: {tnx_color}; font-weight: 600;">{'+' if macro['TNX_diff'] > 0 else ''}{macro['TNX_diff']:.3f}%p</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with c_mac3:
-            st.markdown("""
-            <div style="padding: 10px; font-size: 12.5px; color: #495057; line-height: 1.6;">
-                <b>📌 지표 가이드:</b><br>
-                • <b>VIX가 오르면</b>: 시장의 불확실성과 공포가 커지고 있음을 의미합니다 (보통 주가 하락).<br>
-                • <b>국채 금리가 오르면</b>: 연준의 긴축(금리 인하 지연) 우려가 커져 기술/성장주에 악재로 작용합니다.
-            </div>
-            """, unsafe_allow_html=True)
+        c_mac1, c_mac2, c_mac3, c_mac4 = st.columns(4)
+        
+        def render_macro_card(col, title, val, diff, unit="", color_invert=False):
+            with col:
+                # 공포/금리(VIX, TNX)는 오르면 Red, 비트코인/달러는 상황에 따라 다르나 직관성을 위해 등락 표기
+                if color_invert: diff_color = "green" if diff > 0 else "red"
+                else: diff_color = "red" if diff > 0 else "green"
+                
+                st.markdown(f"""
+                <div class="macro-card">
+                    <div style="font-size: 13px; color: #8E8E93; font-weight: 700;">{title}</div>
+                    <div style="font-size: 24px; font-weight: 900; margin-top: 5px;">{val:,.2f}{unit}</div>
+                    <div style="color: {diff_color}; font-weight: 600; font-size: 14px;">{'+' if diff > 0 else ''}{diff:,.2f}{unit}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        render_macro_card(c_mac1, "VIX (공포 지수)", macro['VIX']['val'], macro['VIX']['diff'])
+        render_macro_card(c_mac2, "US 10-Yr (미 10년물 국채)", macro['TNX']['val'], macro['TNX']['diff'], unit="%")
+        render_macro_card(c_mac3, "DXY (달러 인덱스)", macro['DXY']['val'], macro['DXY']['diff'])
+        render_macro_card(c_mac4, "BTC (비트코인/위험자산 선행)", macro['BTC']['val'], macro['BTC']['diff'], unit="$", color_invert=True)
+
+        st.markdown("""
+        <div style="padding: 15px; font-size: 13px; color: #495057; line-height: 1.7; background-color: #F8F9FA; border-radius: 8px;">
+            <b>📌 거시 지표 분석 가이드 (Aggressive Growth 투자자 관점):</b><br>
+            • <b>VIX (공포 지수)</b>: 20을 넘어가면 시장의 패닉이 시작됨을 의미합니다. 급등 시 주식 비중을 줄이세요.<br>
+            • <b>US 10-Yr (국채 금리)</b>: 기술주/성장주의 밸류에이션(할인율)에 직격탄입니다. 금리가 오르면 성장주는 하방 압력을 받습니다.<br>
+            • <b>DXY (달러 인덱스)</b>: 달러 강세는 미국 외 시장(한국 등 신흥국)의 외국인 자금 이탈을 유발하는 악재입니다.<br>
+            • <b>BTC (비트코인)</b>: 글로벌 시장의 '리스크 온(Risk-on)' 즉, 위험자산 선호도를 가장 먼저 보여주는 유동성 선행 지표입니다.
+        </div>
+        """, unsafe_allow_html=True)
             
     st.markdown("---")
     
-    # 2. 내 포트폴리오 뉴스 피드 (Token Free)
+    # 2. 내 포트폴리오 뉴스 피드 (안전한 파싱 로직 적용)
     st.markdown("#### 📰 Portfolio News Feed (내 종목 최신 이벤트)")
     news_cols = st.columns(2)
     for i, (name, tk) in enumerate(st.session_state.my_portfolio.items()):
         with news_cols[i % 2]:
-            with st.expander(f"📌 {name} ({tk}) 주요 뉴스 확인", expanded=True):
+            with st.expander(f"[{name}] 주요 뉴스 확인", expanded=True):
                 try:
-                    # yfinance 내장 뉴스 기능 사용 (Gemini API 미사용)
                     stock_news = yf.Ticker(tk).news
-                    if stock_news:
-                        for n in stock_news[:4]: # 상위 4개 뉴스
-                            title = n.get('title', '제목 없음')
-                            publisher = n.get('publisher', '출처 미상')
-                            link = n.get('link', '#')
+                    valid_news_count = 0
+                    
+                    # Yahoo API 응답이 리스트 형태일 때 안전하게 추출
+                    if stock_news and isinstance(stock_news, list):
+                        for n in stock_news:
+                            # 야후 파이낸스의 변동성 높은 JSON 구조 대응 (get 메서드 및 다중 탐색)
+                            title = n.get('title') or n.get('content', {}).get('title')
+                            publisher = n.get('publisher') or n.get('content', {}).get('provider', {}).get('displayName')
+                            link = n.get('link') or n.get('content', {}).get('clickThroughUrl', {}).get('url')
                             
-                            # 날짜 변환 (UNIX timestamp -> 일반 날짜)
-                            pub_time = "최근"
-                            if 'providerPublishTime' in n:
-                                pub_time = time.strftime('%Y-%m-%d', time.localtime(n['providerPublishTime']))
+                            # 제목과 링크가 모두 존재하는 유효한 뉴스만 출력
+                            if title and link:
+                                st.markdown(f"""
+                                <div style="margin-bottom: 12px; font-size: 13.5px;">
+                                    <a href="{link}" target="_blank" style="text-decoration: none; color: #00529B; font-weight: 600; display: block; margin-bottom: 3px;">{title}</a>
+                                    <span style="font-size: 11.5px; color: #8E8E93;">{publisher if publisher else '출처 미상'}</span>
+                                </div>
+                                """, unsafe_allow_html=True)
+                                valid_news_count += 1
                                 
-                            st.markdown(f"""
-                            <div style="margin-bottom: 12px; font-size: 13.5px;">
-                                <a href="{link}" target="_blank" style="text-decoration: none; color: #00529B; font-weight: 600; display: block; margin-bottom: 3px;">{title}</a>
-                                <span style="font-size: 11.5px; color: #8E8E93;">{publisher} • {pub_time}</span>
-                            </div>
-                            """, unsafe_allow_html=True)
-                    else:
-                        st.write("최신 뉴스 데이터가 없습니다.")
+                            if valid_news_count >= 4: # 최대 4개까지만
+                                break
+                                
+                    if valid_news_count == 0:
+                        st.info("해당 종목의 최근 글로벌 영문 뉴스 데이터가 없습니다. (한국 종목은 지원되지 않을 수 있습니다)")
+                        
                 except Exception as e:
-                    st.write("뉴스를 불러오지 못했습니다.")
+                    st.warning("뉴스 데이터를 불러오는 중 오류가 발생했습니다.")
 
     st.markdown("---")
     
-    # 3. AI 심층 리서치 (기존 기능)
+    # 3. AI 심층 리서치
     st.markdown("#### 🤖 AI Senior Analyst (선택적 심층 브리핑)")
     if gemini_client:
         if st.button("Generate Senior Analyst Briefing (토큰 소모)"):
