@@ -1,0 +1,83 @@
+import streamlit as st
+import yfinance as yf
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import pandas as pd
+import numpy as np
+import ta
+
+# --- 페이지 기본 설정 및 미니멀 UI CSS ---
+st.set_page_config(page_title="Alpha Terminal", layout="wide")
+
+st.markdown("""
+<style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    .block-container {padding-top: 3rem; padding-bottom: 2rem;}
+    div[data-testid="stMetricValue"] {font-size: 1.8rem; font-weight: 600;}
+    .stTabs [data-baseweb="tab-list"] {gap: 30px;}
+</style>
+""", unsafe_allow_html=True)
+
+# --- AI 판단 로직 엔진 ---
+def get_ai_judgment(ticker):
+    try:
+        df = yf.download(ticker, period="1y")
+        if df.empty or len(df) < 50: return None, 50, "데이터 부족"
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
+        
+        # 지표 계산
+        bb = ta.volatility.BollingerBands(df['Close'])
+        df['BB_H'], df['BB_L'] = bb.bollinger_hband(), bb.bollinger_lband()
+        df['RSI'] = ta.momentum.rsi(df['Close'])
+        macd = ta.trend.MACD(df['Close'])
+        df['M'], df['MS'] = macd.macd(), macd.macd_signal()
+        
+        curr = df.iloc[-1]
+        score = 50
+        
+        # 전략적 판단 기준
+        if curr['RSI'] < 30: score += 25  # 과매도
+        if curr['Close'] < df['BB_L'].iloc[-1]: score += 15 # 볼밴 하단 이탈
+        if curr['M'] > curr['MS']: score += 10 # 추세 상승
+        if curr['RSI'] > 70: score -= 30  # 과열
+        
+        verdict = "🚀 강력 매수" if score >= 75 else "✅ 매수 검토" if score >= 60 else "🆘 분할 매도" if score <= 30 else "🟡 관망 (HOLD)"
+        return df, int(score), verdict
+    except: return None, 50, "오류"
+
+# --- 화면 레이아웃 ---
+st.title("🏛️ 전략 투자 터미널")
+st.caption("AI 알고리즘이 실시간 데이터를 분석하여 최적의 매매 타이밍을 제시합니다.")
+
+tab1, tab2, tab3 = st.tabs(["💎 포트폴리오 진단", "📊 전략 종목 30선", "🌍 매크로 리스크"])
+
+# [Tab 1: 포트폴리오 진단]
+with tab1:
+    col_l, col_r = st.columns([1, 1])
+    stocks = {"SK하이닉스": "000660.KS", "TSLL": "TSLL"}
+    for i, (name, tk) in enumerate(stocks.items()):
+        df, score, verdict = get_ai_judgment(tk)
+        with (col_l if i==0 else col_r):
+            st.metric(f"{name}", f"{df['Close'].iloc[-1]:.1f}", f"AI 점수: {score}")
+            st.markdown(f"**판단:** {verdict}")
+            fig = go.Figure(go.Scatter(x=df.index[-60:], y=df['Close'][-60:], name="Price", line=dict(color='#1f77b4', width=2)))
+            fig.update_layout(height=250, margin=dict(l=0,r=0,t=0,b=0), template="plotly_white", xaxis_showgrid=False, yaxis_showgrid=False)
+            st.plotly_chart(fig, use_container_width=True)
+
+# [Tab 2: 추천 리스트]
+with tab2:
+    st.subheader("💡 AI 선별 한·미 전략주")
+    kr_us = ['005930.KS', '005380.KS', '035420.KS', 'NVDA', 'AAPL', 'MSFT', 'META', 'AMZN', 'GOOGL', 'AVGO', 'LLY', 'TSLA', 'COST', 'V', 'JPM']
+    data = []
+    for t in kr_us:
+        _, score, v = get_ai_judgment(t)
+        data.append({"티커": t, "AI 스코어": score, "AI 판단": v})
+    st.table(pd.DataFrame(data))
+
+# [Tab 3: 매크로]
+with tab3:
+    st.markdown("#### 🌐 글로벌 시장 리스크 상황판")
+    st.info("📊 **미국 CPI/FOMC:** 금리 인하 기대감 변화에 따른 기술주 변동성 확대 주의")
+    st.warning("🏮 **지정학적 리스크:** 대외 무역 갈등에 따른 반도체 공급망 변수 확인")
