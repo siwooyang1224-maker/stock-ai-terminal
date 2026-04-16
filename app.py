@@ -61,13 +61,14 @@ st.markdown("""
         margin-bottom: 25px;
     }
     .decision-label { font-size: 13px; font-weight: 700; color: #8E8E93; text-transform: uppercase; letter-spacing: 0.5px; }
-    .decision-value { font-size: 26px; font-weight: 900; margin: 10px 0; }
+    .decision-value { font-size: 26px; font-weight: 900; margin: 10px 0; display: flex; align-items: baseline; gap: 8px; }
+    .decision-prob { font-size: 15px; font-weight: 600; padding: 4px 10px; border-radius: 6px; }
     .data-table { width: 100%; font-size: 13.5px; margin-top: 15px; border-collapse: collapse; }
     .data-table td { padding: 10px 0; border-bottom: 1px solid #F1F3F5; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. 정밀 퀀트 엔진 ---
+# --- 3. 정밀 퀀트 엔진 (IB Best Practice Multi-Factor Model) ---
 @st.cache_data(ttl=300)
 def analyze_stock_quant(ticker):
     try:
@@ -75,45 +76,67 @@ def analyze_stock_quant(ticker):
         if df.empty or len(df) < 50: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
         
-        # 기본 지표
+        # 지표 산출
         bb = ta.volatility.BollingerBands(df['Close'])
         rsi = ta.momentum.rsi(df['Close']).iloc[-1]
         macd = ta.trend.MACD(df['Close'])
         m_val, s_val = macd.macd().iloc[-1], macd.macd_signal().iloc[-1]
-        
         curr_price = df['Close'].iloc[-1]
         bb_h, bb_l = bb.bollinger_hband().iloc[-1], bb.bollinger_lband().iloc[-1]
         bb_pos = (curr_price - bb_l) / (bb_h - bb_l) * 100 if (bb_h - bb_l) != 0 else 50.0
-
-        # 추가 지표 (ADX, MFI, ATR)
+        
         adx = ta.trend.adx(df['High'], df['Low'], df['Close']).iloc[-1]
         mfi = ta.volume.money_flow_index(df['High'], df['Low'], df['Close'], df['Volume']).iloc[-1]
         atr = ta.volatility.average_true_range(df['High'], df['Low'], df['Close']).iloc[-1]
         
-        # 오리지널 Decision Logic 유지
-        score = 50.0
-        if rsi < 35: score += 20
-        elif rsi > 65: score -= 20
-        if m_val > s_val: score += 15
-        else: score -= 15
-        if bb_pos < 20: score += 15
-        elif bb_pos > 80: score -= 15
+        # --- IB Best Practice Scoring (0~100) ---
+        score = 50.0 # 시작 기준선
         
-        if score > 52:
-            verdict, confidence = "BUY (매수 권장)", int((score - 50) * 2.5 // 10 * 10)
-            color = "#00873C"
-        elif score < 48:
-            verdict, confidence = "SELL (매도 권장)", int((50 - score) * 2.5 // 10 * 10)
-            color = "#FF3B30"
+        # 1. Trend & Momentum (MACD + ADX)
+        if m_val > s_val:
+            score += 15
+            if adx > 25: score += 15
         else:
-            verdict, confidence = "HOLD (중립 관망)", 50
-            color = "#8E8E93"
+            score -= 15
+            if adx > 25: score -= 15
+            
+        # 2. Smart Money Flow (MFI)
+        if mfi > 70: score += 20
+        elif mfi > 55: score += 10
+        elif mfi < 30: score -= 20
+        elif mfi < 45: score -= 10
+        
+        # 3. Mean Reversion & Volatility (RSI + BB)
+        if rsi < 30: score += 10
+        elif rsi > 70: score -= 10
+        if bb_pos < 10: score += 5
+        elif bb_pos > 90: score -= 5
+        
+        final_score = int(max(0, min(100, score)))
+        
+        # 방향성 맵핑
+        if final_score >= 60:
+            if final_score >= 80: verdict, color = "STRONG BUY (강력 매수)", "#00873C"
+            else: verdict, color = "ACCUMULATE (분할 매수)", "#62B236"
+            conf_str = f"매수 확률: {final_score}%"
+            conf_val = final_score
+            conf_bg = "#E6F4EA"
+        elif final_score <= 40:
+            if final_score <= 20: verdict, color = "STRONG SELL (강력 매도)", "#FF3B30"
+            else: verdict, color = "REDUCE (비중 축소)", "#FF9500"
+            conf_str = f"매도 확률: {100 - final_score}%"
+            conf_val = 100 - final_score
+            conf_bg = "#FCE8E6"
+        else:
+            verdict, color = "HOLD (중립 관망)", "#8E8E93"
+            conf_str = f"방향성 모호 (스코어: {final_score})"
+            conf_val = 50
+            conf_bg = "#F1F3F5"
             
         return {
-            "Ticker": ticker, "Price": curr_price, "RSI": round(rsi, 2),
-            "MACD_Status": "Bullish Cross (상승 돌파)" if m_val > s_val else "Bearish Cross (하락 돌파)",
+            "Ticker": ticker, "Price": curr_price, "RSI": round(rsi, 2), "MACD_Status": "Bullish Cross" if m_val > s_val else "Bearish Cross",
             "BB_Pos": round(bb_pos, 1), "ADX": round(adx, 1), "MFI": round(mfi, 1), "ATR": round(atr, 2),
-            "Verdict": verdict, "Confidence": min(100, confidence), "Color": color, "df": df
+            "Verdict": verdict, "Conf_Str": conf_str, "Conf_Val": conf_val, "Conf_Bg": conf_bg, "Score": final_score, "Color": color, "df": df
         }
     except: return None
 
@@ -142,66 +165,66 @@ with tab1:
         data = analyze_stock_quant(tk)
         if data:
             with p_cols[i % 2]:
-                rsi_msg = f"RSI(심리 강도)가 {data['RSI']}입니다. 이는 현재 시장 참여자들의 심리가 {'과열권에 진입하여 단기 조정 가능성이 높음' if data['RSI'] > 65 else '공포 구간에 위치하여 기술적 반등 확률이 높아짐' if data['RSI'] < 35 else '안정적인 중립 상태를 유지하고 있음'}을 의미합니다."
-                macd_msg = f"MACD 모멘텀이 {data['MACD_Status']} 상태입니다. 현재 주가의 상승 동력이 {'확대되며 추세가 강화되고 있음' if 'Bullish' in data['MACD_Status'] else '둔화되며 하방 압력이 점증하고 있음'}을 의미합니다."
-                bb_msg = f"BB(가격 편차 위치)가 {data['BB_Pos']}%입니다. 가격이 {'통계적 변동 범위 상단에 이격되어 평균 회귀가 예상됨' if data['BB_Pos'] > 85 else '통계적 변동 범위 하단에 도달하여 하방 지지력이 확인됨' if data['BB_Pos'] < 15 else '박스권 내에서 정상적인 가격 경로를 형성 중임'}을 의미합니다."
-                
-                # 추가 지표 문장 해석
-                adx_msg = f"ADX(추세 강도)가 {data['ADX']}입니다. 25 이상일 경우 강한 추세를 의미하며, 현재는 {'뚜렷한 방향성을 가지고 움직이는 중' if data['ADX'] > 25 else '방향성이 불분명한 횡보 구간'}입니다."
-                mfi_msg = f"MFI(자금 유입 효율)가 {data['MFI']}입니다. 이는 가격 변동 시 실제 자금이 {'강하게 쏠려 유입되고 있음' if data['MFI'] > 60 else '빠져나가고 있거나 수급이 약함' if data['MFI'] < 40 else '균형을 이루고 있음'}을 보여줍니다."
+                rsi_msg = f"RSI(심리 강도)가 {data['RSI']}입니다. 현재 {'과열권으로 단기 차익매물 출회 가능성' if data['RSI'] > 65 else '침체권으로 저가 매수세 유입 가능성' if data['RSI'] < 35 else '시장 심리가 안정된 중립 구간'}입니다."
+                macd_msg = f"MACD 추세가 {data['MACD_Status']}입니다. 단기 이동평균이 장기 이동평균을 {'상향 돌파하여 상승 랠리' if 'Bullish' in data['MACD_Status'] else '하향 이탈하여 하락 압력'}가 형성 중입니다."
+                bb_msg = f"BB(가격 편차 위치)가 {data['BB_Pos']}%입니다. 가격이 통계적 밴드의 {'상단을 뚫어 단기 조정이 예상됨' if data['BB_Pos'] > 85 else '하단에 닿아 기술적 반등이 기대됨' if data['BB_Pos'] < 15 else '정상 범위 안에서 움직임'}을 시사합니다."
+                adx_msg = f"ADX(추세 강도)가 {data['ADX']}입니다. 25를 넘으면 추세가 강함을 뜻하며, 현재 {'명확한 방향성을 가지고 뻗어나가는 중' if data['ADX'] > 25 else '방향성이 뚜렷하지 않은 횡보장세'}입니다."
+                mfi_msg = f"MFI(자금 유입)가 {data['MFI']}입니다. 거래량이 실린 스마트 머니가 {'강하게 유입되고 있어 추세 신뢰도가 높음' if data['MFI'] > 60 else '점차 빠져나가고 있어 보수적 접근 필요' if data['MFI'] < 40 else '균형을 이루고 있음'}을 의미합니다."
+                # ATR 설명 문장 추가
+                atr_msg = f"ATR(변동성 지수)가 {data['ATR']:.2f}입니다. 이는 최근 일일 평균 가격 변동폭을 의미하며, 해당 수치를 바탕으로 타이트한 손절선과 목표가를 설정하여 리스크를 관리해야 합니다."
 
                 st.markdown(f"""
                 <div class="ib-card">
-                    <div class="decision-label">{name} ({tk}) / Intelligence Report</div>
-                    <div class="decision-value" style="color: {data['Color']};">{data['Verdict']} (확신도: {data['Confidence']}%)</div>
+                    <div class="decision-label">{name} ({tk}) / Multi-Factor Intelligence</div>
+                    <div class="decision-value" style="color: {data['Color']};">
+                        {data['Verdict']}
+                        <span class="decision-prob" style="background-color:{data['Conf_Bg']}; color:{data['Color']}; border: 1px solid {data['Color']}40;">{data['Conf_Str']}</span>
+                    </div>
                     <table class="data-table">
-                        <tr><td>Current Price (현재 주가)</td><td style="text-align:right; font-weight:700;">{data['Price']:,.2f}</td></tr>
-                        <tr><td>RSI (심리 강도)</td><td style="text-align:right;">{data['RSI']}</td></tr>
-                        <tr><td>MACD Momentum (추세 모멘텀)</td><td style="text-align:right;">{data['MACD_Status']}</td></tr>
-                        <tr><td>BB Standard Dev. Pos (가격 편차 위치)</td><td style="text-align:right;">{data['BB_Pos']}%</td></tr>
-                        <tr style="border-top: 2px dashed #F1F3F5;"><td>ADX (추세 강도)</td><td style="text-align:right; color:{'#D71920' if data['ADX'] > 25 else '#1C1C1E'};">{data['ADX']}</td></tr>
-                        <tr><td>MFI (자금 유입 효율)</td><td style="text-align:right;">{data['MFI']}</td></tr>
-                        <tr><td>ATR (변동성 지수)</td><td style="text-align:right;">{data['ATR']}</td></tr>
+                        <tr><td style="color:#8E8E93;">Current Price (현재 주가)</td><td style="text-align:right; font-weight:700;">{data['Price']:,.2f}</td></tr>
+                        <tr><td style="color:#8E8E93;">RSI (심리 강도)</td><td style="text-align:right;">{data['RSI']}</td></tr>
+                        <tr><td style="color:#8E8E93;">MACD Momentum (추세 모멘텀)</td><td style="text-align:right;">{data['MACD_Status']}</td></tr>
+                        <tr><td style="color:#8E8E93;">BB Pos (가격 편차 위치)</td><td style="text-align:right;">{data['BB_Pos']}%</td></tr>
+                        <tr style="border-top: 2px dashed #F1F3F5;"><td style="color:#8E8E93; font-weight:600;">ADX (추세 강도)</td><td style="text-align:right; font-weight:600; color:{'#D71920' if data['ADX'] > 25 else '#1C1C1E'};">{data['ADX']}</td></tr>
+                        <tr><td style="color:#8E8E93; font-weight:600;">MFI (자금 유입 효율)</td><td style="text-align:right; font-weight:600;">{data['MFI']}</td></tr>
+                        <tr><td style="color:#8E8E93;">ATR (변동성 지수)</td><td style="text-align:right;">{data['ATR']:.2f}</td></tr>
                     </table>
                     <div style="margin-top: 20px; font-size: 13px; color: #495057; line-height: 1.7; background: #F8F9FA; padding: 15px; border-radius: 6px;">
-                        <b>📉 Logic-Based Insight (논리적 분석):</b><br>
+                        <b>📉 퀀트 팩터 분석 요약:</b><br>
                         • {rsi_msg}<br>
                         • {macd_msg}<br>
                         • {bb_msg}<br>
                         • {adx_msg}<br>
-                        • {mfi_msg}
+                        • {mfi_msg}<br>
+                        • {atr_msg}
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # 4단 차트로 확장 (Price/BB, MACD, RSI, ADX/MFI)
+                # 4단 차트 출력
                 df_chart = data['df'][-120:]
                 fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.4, 0.2, 0.2, 0.2])
                 
-                # 1. Price & BB
                 fig.add_trace(go.Candlestick(x=df_chart.index, open=df_chart['Open'], high=df_chart['High'], low=df_chart['Low'], close=df_chart['Close'], name="Price (주가)"), row=1, col=1)
                 bb_ta = ta.volatility.BollingerBands(df_chart['Close'])
-                fig.add_trace(go.Scatter(x=df_chart.index, y=bb_ta.bollinger_hband(), line=dict(color='rgba(0,82,155,0.4)', width=1), name="BB Upper (상단선)"), row=1, col=1)
-                fig.add_trace(go.Scatter(x=df_chart.index, y=bb_ta.bollinger_lband(), line=dict(color='rgba(0,82,155,0.4)', width=1), fill='tonexty', name="BB Lower (하단선)"), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_chart.index, y=bb_ta.bollinger_hband(), line=dict(color='rgba(0,82,155,0.4)', width=1), name="BB Upper (상단)"), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_chart.index, y=bb_ta.bollinger_lband(), line=dict(color='rgba(0,82,155,0.4)', width=1), fill='tonexty', name="BB Lower (하단)"), row=1, col=1)
                 
-                # 2. MACD
                 macd_ta = ta.trend.MACD(df_chart['Close'])
-                fig.add_trace(go.Scatter(x=df_chart.index, y=macd_ta.macd(), line=dict(color='#00529B', width=1.5), name="MACD Line (추세선)"), row=2, col=1)
-                fig.add_trace(go.Scatter(x=df_chart.index, y=macd_ta.macd_signal(), line=dict(color='#FF9500', width=1), name="Signal Line (신호선)"), row=2, col=1)
-                fig.add_trace(go.Bar(x=df_chart.index, y=macd_ta.macd_diff(), marker_color='#DEE2E6', name="Histogram (강도)"), row=2, col=1)
+                fig.add_trace(go.Scatter(x=df_chart.index, y=macd_ta.macd(), line=dict(color='#00529B', width=1.5), name="MACD (추세)"), row=2, col=1)
+                fig.add_trace(go.Scatter(x=df_chart.index, y=macd_ta.macd_signal(), line=dict(color='#FF9500', width=1), name="Signal (신호)"), row=2, col=1)
+                fig.add_trace(go.Bar(x=df_chart.index, y=macd_ta.macd_diff(), marker_color='#DEE2E6', name="Histogram"), row=2, col=1)
                 
-                # 3. RSI
                 rsi_ta = ta.momentum.rsi(df_chart['Close'])
-                fig.add_trace(go.Scatter(x=df_chart.index, y=rsi_ta, line=dict(color='#AF52DE', width=1.5), name="RSI (심리 강도)"), row=3, col=1)
+                fig.add_trace(go.Scatter(x=df_chart.index, y=rsi_ta, line=dict(color='#AF52DE', width=1.5), name="RSI (심리)"), row=3, col=1)
                 fig.add_hline(y=70, line_dash="dot", line_color="#FF3B30", row=3, col=1)
                 fig.add_hline(y=30, line_dash="dot", line_color="#34C759", row=3, col=1)
                 
-                # 4. ADX & MFI
                 adx_ta = ta.trend.adx(df_chart['High'], df_chart['Low'], df_chart['Close'])
                 mfi_ta = ta.volume.money_flow_index(df_chart['High'], df_chart['Low'], df_chart['Close'], df_chart['Volume'])
-                fig.add_trace(go.Scatter(x=df_chart.index, y=adx_ta, line=dict(color='#D71920', width=1.5), name="ADX (추세강도)"), row=4, col=1)
-                fig.add_trace(go.Scatter(x=df_chart.index, y=mfi_ta, line=dict(color='#34C759', width=1.5), name="MFI (자금유입)"), row=4, col=1)
-                fig.add_hline(y=25, line_dash="dot", line_color="orange", row=4, col=1) # ADX 추세 기준선
+                fig.add_trace(go.Scatter(x=df_chart.index, y=adx_ta, line=dict(color='#D71920', width=1.5), name="ADX (강도)"), row=4, col=1)
+                fig.add_trace(go.Scatter(x=df_chart.index, y=mfi_ta, line=dict(color='#34C759', width=1.5), name="MFI (수급)"), row=4, col=1)
+                fig.add_hline(y=25, line_dash="dot", line_color="orange", row=4, col=1) 
 
                 fig.update_layout(height=800, template="plotly_white", margin=dict(l=0,r=0,t=0,b=0), xaxis_rangeslider_visible=False, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                 st.plotly_chart(fig, use_container_width=True)
@@ -210,24 +233,26 @@ with tab1:
                     del st.session_state.my_portfolio[name]
                     st.rerun()
 
-# [탭 2: 유니버스 스크리닝]
+# [탭 2: 유니버스 스크리닝 - 모든 지표 출력]
 with tab2:
     st.markdown("### Global Universe Screening (100 Assets Summary)")
+    st.info("💡 스크리닝 점수(Quant Score)는 RSI, MACD, BB, ADX, MFI 데이터를 모두 합산하여 산출됩니다.")
     
     def get_screen_data(stocks):
         res = []
         for t, n in stocks.items():
             d = analyze_stock_quant(t)
             if d: res.append({
-                "Asset (종목)": n, "Ticker (티커)": t, "Confidence (확신도)": d['Confidence'], 
-                "Verdict (의견)": d['Verdict'], "RSI (심리)": d['RSI'], "ADX (추세)": d['ADX']
+                "Asset (종목)": n, "Ticker": t, "Score (퀀트점수)": d['Score'], 
+                "Verdict (의견)": d['Verdict'], "RSI": d['RSI'], "MACD": d['MACD_Status'], 
+                "BB(%)": d['BB_Pos'], "ADX": d['ADX'], "MFI": d['MFI'], "ATR": d['ATR']
             })
         return pd.DataFrame(res)
 
     c1, c2 = st.columns(2)
     column_cfg = {
-        "Confidence (확신도)": st.column_config.ProgressColumn(
-            "Confidence Level (%)", min_value=0, max_value=100, format="%d"
+        "Score (퀀트점수)": st.column_config.ProgressColumn(
+            "Quant Score (0-100)", min_value=0, max_value=100, format="%d"
         )
     }
 
