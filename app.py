@@ -218,20 +218,40 @@ with tab2:
 with tab3:
     st.markdown("<h3 style='color: #1C1C1E; font-weight: 700;'>Gemini 데일리 브리핑</h3>", unsafe_allow_html=True)
     if gemini_client:
-        market_news = "최근 기술주 전반에 조정이 오고 있으며, 반도체 섹터의 변동성이 큽니다. 금리 인하 기대감은 다소 후퇴했습니다."
+        # 이 변수에 뉴스 헤드라인들이나 시장 키워드들을 넣어주면 AI가 알아서 살을 붙여 보고서를 씁니다.
+        market_news = "기술주 전반 조정, 반도체 섹터 변동성 확대, 금리 인하 기대감 후퇴, 글로벌 지정학적 긴장감 잔존"
+        
+        # 프롬프트 엔지니어링: AI에게 역할과 명확한 출력 양식을 부여합니다.
+        prompt = f"""
+        당신은 월스트리트의 최고 투자 전략가입니다.
+        다음 시장 키워드들을 분석하여, 초보 투자자도 읽기 쉬운 '데일리 마켓 브리핑'을 작성해주세요.
+        시장 키워드: [{market_news}]
+
+        반드시 다음 양식을 지켜서 마크다운(Markdown)으로 깔끔하게 출력해주세요:
+        
+        ### 📌 오늘의 핵심 마켓 이슈
+        (현재 시장 상황에서 도출할 수 있는 주요 이슈 3~5가지를 불릿 포인트로 정리. 각 이슈의 원인과 영향을 1~2줄로 설명)
+
+        ### 💡 전략가의 인사이트
+        (이러한 상황 속에서 투자자는 어떤 포지션을 취해야 하는지, 리스크 관리 방법이나 주목해야 할 섹터 등 딥다이브 분석)
+
+        ### 🎯 한 줄 요약
+        (오늘의 브리핑 내용을 관통하는 명언이나 핵심 요약 한 줄)
+        """
         
         if st.button("🔄 AI 브리핑 생성 / 재시도"):
-            with st.spinner("AI가 시장 상황을 분석하고 있습니다... (서버 혼잡 시 약간의 시간이 소요될 수 있습니다)"):
+            with st.spinner("AI가 시장 상황을 분석하여 브리핑 보고서를 작성 중입니다..."):
                 max_retries = 3
                 
                 for attempt in range(max_retries):
                     try:
-                        # 다시 2.5 버전으로 복구 완료
                         res = gemini_client.models.generate_content(
                             model='gemini-2.5-flash', 
-                            contents=f"투자 전략가로서 다음 시장 상황을 분석하고 비전공자도 이해할 수 있게 3줄로 요약해줘: {market_news}"
+                            contents=prompt
                         )
-                        st.success(res.text)
+                        
+                        # st.success 대신 일반 markdown으로 출력하면 보고서 양식(헤딩, 굵은 글씨 등)이 훨씬 예쁘게 렌더링됩니다.
+                        st.markdown(res.text)
                         break 
                         
                     except Exception as e:
