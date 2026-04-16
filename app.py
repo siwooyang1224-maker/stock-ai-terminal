@@ -15,7 +15,34 @@ if "GEMINI_API_KEY" in st.secrets:
 else:
     gemini_client = None
 
-# --- 1. 퀀트 터미널 스타일 CSS ---
+# --- 1. 유니버스 데이터 (한국/미국 각 50종목) ---
+KR_STOCKS = {
+    '005930.KS': '삼성전자', '000660.KS': 'SK하이닉스', '005380.KS': '현대차', '000270.KS': '기아', '035420.KS': 'NAVER',
+    '035720.KS': '카카오', '068270.KS': '셀트리온', '005490.KS': 'POSCO홀딩스', '051910.KS': 'LG화학', '006400.KS': '삼성SDI',
+    '105560.KS': 'KB금융', '055550.KS': '신한지주', '090430.KS': '아모레퍼시픽', '086520.KQ': '에코프로', '036570.KS': '엔씨소프트',
+    '096770.KS': 'SK이노베이션', '066570.KS': 'LG전자', '028260.KS': '삼성물산', '015760.KS': '한국전력', '011200.KS': 'HMM',
+    '033780.KS': 'KT&G', '086790.KS': '하나금융지주', '034220.KS': 'LG디스플레이', '003490.KS': '대한항공', '034020.KS': '두산에너빌리티',
+    '267250.KS': 'HD현대', '032830.KS': '삼성생명', '138040.KS': '메리츠금융지주', '042660.KS': '한화오션', '259960.KS': '크래프톤',
+    '035900.KQ': 'JYP Ent.', '251270.KS': '넷마블', '352820.KS': '하이브', '010950.KS': 'S-Oil', '000810.KS': '삼성화재',
+    '030200.KS': 'KT', '017670.KS': 'SK텔레콤', '036460.KS': '한국가스공사', '010130.KS': '고려아연', '011780.KS': '금호석유',
+    '051900.KS': 'LG생활건강', '009150.KS': '삼성전기', '018260.KS': '대한제당', '000100.KS': '유한양행', '000080.KS': '하이트진로',
+    '005830.KS': 'DB손해보험', '000720.KS': '현대건설', '012330.KS': '현대모비스', '004020.KS': '현대제철', '024110.KS': '기업은행'
+}
+
+US_STOCKS = {
+    'AAPL': 'Apple', 'MSFT': 'Microsoft', 'NVDA': 'NVIDIA', 'GOOGL': 'Alphabet', 'AMZN': 'Amazon',
+    'META': 'Meta', 'TSLA': 'Tesla', 'AVGO': 'Broadcom', 'LLY': 'Eli Lilly', 'JPM': 'JPMorgan',
+    'V': 'Visa', 'WMT': 'Walmart', 'JNJ': 'J&J', 'PG': 'P&G', 'MA': 'Mastercard',
+    'HD': 'Home Depot', 'CVX': 'Chevron', 'MRK': 'Merck', 'COST': 'Costco', 'ABBV': 'AbbVie',
+    'PEP': 'PepsiCo', 'KO': 'Coca-Cola', 'ADBE': 'Adobe', 'ORCL': 'Oracle', 'BAC': 'BofA',
+    'CRM': 'Salesforce', 'AMD': 'AMD', 'NFLX': 'Netflix', 'TMO': 'Thermo Fisher', 'CSCO': 'Cisco',
+    'NKE': 'Nike', 'DIS': 'Disney', 'PFE': 'Pfizer', 'ABT': 'Abbott', 'DHR': 'Danaher',
+    'QCOM': 'Qualcomm', 'CAT': 'Caterpillar', 'VZ': 'Verizon', 'TXN': 'TI', 'INTC': 'Intel',
+    'AMAT': 'Applied Mat.', 'INTU': 'Intuit', 'IBM': 'IBM', 'LOW': 'Lowe\'s', 'NEE': 'NextEra',
+    'UNP': 'Union Pacific', 'COP': 'ConocoPhillips', 'GE': 'GE', 'GS': 'Goldman Sachs', 'MS': 'Morgan Stanley'
+}
+
+# --- 2. 퀀트 터미널 스타일 CSS ---
 st.set_page_config(page_title="Alpha Terminal Quant", layout="wide")
 
 st.markdown("""
@@ -23,84 +50,18 @@ st.markdown("""
     @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
     * {font-family: '-apple-system', 'BlinkMacSystemFont', 'Pretendard', sans-serif !important;}
     .stApp {background-color: #F2F2F7;}
-    
-    /* 전문적이고 밀도 있는 카드 스타일 */
     .quant-card {
         background-color: #FFFFFF;
-        border-radius: 16px;
+        border-radius: 20px;
         padding: 24px;
         box-shadow: 0 4px 20px rgba(0,0,0,0.05);
         border: 1px solid #E5E5EA;
         margin-bottom: 20px;
     }
-    .metric-title { font-size: 14px; color: #8E8E93; font-weight: 600; margin-bottom: 4px; }
-    .metric-value { font-size: 28px; font-weight: 800; color: #1C1C1E; }
-    .probability-box {
-        background: linear-gradient(135deg, #007AFF, #5856D6);
-        color: white;
-        padding: 20px;
-        border-radius: 14px;
-        text-align: center;
-        margin-bottom: 20px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. 전문가용 퀀트 분석 함수 ---
-def get_quant_analysis_html(data):
-    rsi = data['RSI']
-    bb_pos = data['BB_Pos_Val']
-    macd_val = data['MACD_Diff']
-    prob = data['Probability']
-    
-    # RSI 촘촘한 분석
-    if rsi < 30: rsi_desc = "Extreme Oversold (과매도 극치: 저점 매수 확률 85%↑)"
-    elif rsi < 45: rsi_desc = "Weak Bearish (약세 구간: 하방 경직성 확보 중)"
-    elif rsi < 55: rsi_desc = "Neutral Pivot (중립 구간: 방향성 탐색 시점)"
-    elif rsi < 70: rsi_desc = "Weak Bullish (강세 구간: 추세 추종 유효)"
-    else: rsi_desc = "Strong Overbought (과매수 경계: 수익 실현 매물 출회 주의)"
-
-    # 볼린저 밴드 정밀 분석
-    if bb_pos < 5: bb_desc = "Band Floor (밴드 하단 이탈: 평균 회귀 확률 극대화)"
-    elif bb_pos < 25: bb_desc = "Discount Range (저평가 영역: 분할 매수 적기)"
-    elif bb_pos < 75: bb_desc = "Standard Fairway (정상 범주: 안정적 추세 진행)"
-    elif bb_pos < 95: bb_desc = "Premium Range (고평가 영역: 추가 상승 동력 둔화)"
-    else: bb_desc = "Band Ceiling (밴드 상단 돌파: 단기 고점 징후)"
-
-    # 확률별 색상
-    prob_color = "#FF3B30" if prob < 40 else "#FF9500" if prob < 65 else "#34C759"
-
-    html = f"""
-    <div class="quant-card">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <div style="font-size: 18px; font-weight: 800; color: #1C1C1E;">📊 Technical Strategy Scorecard</div>
-            <div style="background-color: {prob_color}22; color: {prob_color}; padding: 6px 12px; border-radius: 8px; font-weight: 700; font-size: 14px;">
-                Win Probability: {prob}%
-            </div>
-        </div>
-        <table style="width: 100%; border-collapse: collapse;">
-            <tr style="border-bottom: 1px solid #F2F2F7;">
-                <td style="padding: 12px 0; font-size: 13px; color: #8E8E93;">Oscillator RSI (14)</td>
-                <td style="padding: 12px 0; text-align: right; font-weight: 600; font-size: 13px;">{rsi} → <span style="color:#007AFF;">{rsi_desc}</span></td>
-            </tr>
-            <tr style="border-bottom: 1px solid #F2F2F7;">
-                <td style="padding: 12px 0; font-size: 13px; color: #8E8E93;">Bollinger Band Pos (%)</td>
-                <td style="padding: 12px 0; text-align: right; font-weight: 600; font-size: 13px;">{bb_pos:.1f}% → <span style="color:#007AFF;">{bb_desc}</span></td>
-            </tr>
-            <tr>
-                <td style="padding: 12px 0; font-size: 13px; color: #8E8E93;">Trend Momentum (MACD)</td>
-                <td style="padding: 12px 0; text-align: right; font-weight: 600; font-size: 13px;">{data['MACD_Trend']} (Diff: {macd_val:.2f})</td>
-            </tr>
-        </table>
-        <div style="margin-top: 20px; padding: 15px; background-color: #F8F8F9; border-radius: 12px; font-size: 13px; line-height: 1.6; color: #3A3A3C;">
-            <b>🎯 리서치 인사이트:</b> 현재 {data['Ticker']}는 기술적으로 <b>{prob}%</b>의 매수 적합성을 보이고 있습니다. 
-            {rsi_desc}와 {bb_desc}를 종합할 때, 현재 포지션은 <b>{data['Verdict']}</b> 전략이 통계적으로 우월한 구간입니다.
-        </div>
-    </div>
-    """
-    return html
-
-# --- 3. 정밀 퀀트 엔진 ---
+# --- 3. 정밀 퀀트 분석 엔진 ---
 @st.cache_data(ttl=3600)
 def analyze_stock_quant(ticker):
     try:
@@ -108,7 +69,6 @@ def analyze_stock_quant(ticker):
         if df.empty or len(df) < 50: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
         
-        # 지표 계산
         bb = ta.volatility.BollingerBands(df['Close'])
         rsi = ta.momentum.rsi(df['Close']).iloc[-1]
         macd = ta.trend.MACD(df['Close'])
@@ -118,59 +78,56 @@ def analyze_stock_quant(ticker):
         bb_h, bb_l = bb.bollinger_hband().iloc[-1], bb.bollinger_lband().iloc[-1]
         bb_pos = (curr_price - bb_l) / (bb_h - bb_l) * 100
         
-        # --- 확률 모델 로직 (Quant Scoring) ---
-        score = 50.0 # Base Neutral
-        
-        # 1. RSI 가중치 (역발상 전략 가중치)
-        if rsi < 30: score += 25
+        # --- 10단위 확률 모델 로직 ---
+        score = 50.0 
+        if rsi < 30: score += 30
         elif rsi < 40: score += 15
-        elif rsi > 70: score -= 20
+        elif rsi > 70: score -= 25
         elif rsi > 60: score -= 10
         
-        # 2. MACD 가중치 (추세 추종)
         if m_val > s_val: score += 15
         else: score -= 15
         
-        # 3. 볼린저 밴드 가중치 (가격 위치)
-        if bb_pos < 15: score += 20
+        if bb_pos < 10: score += 20
         elif bb_pos < 30: score += 10
-        elif bb_pos > 85: score -= 15
+        elif bb_pos > 90: score -= 20
         
-        # 거래량 필터 (전일 대비 거래량 증가 시 신뢰도 업)
-        vol_sma = df['Volume'].rolling(20).mean().iloc[-1]
-        curr_vol = df['Volume'].iloc[-1]
-        if curr_vol > vol_sma: score += 5
+        # 최종 승률(확률) 계산 (0-100)
+        prob = int(max(0, min(100, score)))
         
-        final_prob = int(max(5, min(98, score))) # 5%~98% 사이로 제한
-        
-        # 최종 판단
-        if final_prob >= 75: verdict = "Institutional Buy (기관급 강한 매수)"
-        elif final_prob >= 60: verdict = "Accumulate (분할 매수 유효)"
-        elif final_prob <= 35: verdict = "Risk Off (적극 매도/관망)"
-        else: verdict = "Hold (중립/추세 관찰)"
+        # 10단위 구간별 의사결정 매핑
+        if prob >= 90: verdict = "Strong Conviction Buy (압도적 매수 구간)"
+        elif prob >= 80: verdict = "Institutional Buy (기관형 강한 매수)"
+        elif prob >= 70: verdict = "Accumulate (적극 분할 매수)"
+        elif prob >= 60: verdict = "Watchful Buy (조심스러운 매수)"
+        elif prob >= 50: verdict = "Hold (중립적 관망)"
+        elif prob >= 40: verdict = "Caution (비중 축소 고려)"
+        elif prob >= 30: verdict = "Weak Bearish (하락 압력 우세)"
+        elif prob >= 20: verdict = "Strong Sell (강한 매도 신호)"
+        elif prob >= 10: verdict = "Risk Off (적극 현금화)"
+        else: verdict = "Panic Exit (기술적 붕괴 구간)"
         
         return {
-            "Ticker": ticker, "Price": curr_price, "RSI": round(rsi, 2),
-            "MACD_Trend": "Bullish" if m_val > s_val else "Bearish", 
-            "MACD_Diff": m_val - s_val,
-            "BB_Pos_Val": bb_pos, "Probability": final_prob, 
-            "Verdict": verdict, "df": df
+            "Ticker": ticker, "Price": curr_price, "RSI": round(rsi, 1),
+            "MACD_Trend": "Bullish (상승)" if m_val > s_val else "Bearish (하락)", 
+            "BB_Pos_Val": bb_pos, "Probability": prob, "Verdict": verdict, "df": df
         }
     except: return None
 
-# --- 4. 메인 대시보드 ---
+# --- 4. 메인 대시보드 화면 ---
+st.markdown("<h1 style='text-align: center; color: #1C1C1E; font-weight: 800;'> Alpha Terminal <span style='color:#007AFF;'>Quant</span></h1>", unsafe_allow_html=True)
+
 if 'my_portfolio' not in st.session_state:
     st.session_state.my_portfolio = {"SK하이닉스": "000660.KS", "IonQ": "IONQ"}
 
-st.markdown("<h1 style='text-align: center; color: #1C1C1E; font-weight: 800;'> Alpha Terminal <span style='color:#007AFF;'>Quant</span></h1>", unsafe_allow_html=True)
+tab1, tab2, tab3 = st.tabs(["Strategy Portfolio (내 포트폴리오)", "Market Universe (시장 스크리닝)", "AI Research (AI 리서치)"])
 
-tab1, tab2, tab3 = st.tabs(["Strategy Portfolio", "Market Universe", "AI Research"])
-
+# [탭 1: 포트폴리오 및 10단위 확률 분석]
 with tab1:
     col_in1, col_in2, col_in3 = st.columns([2, 2, 1])
-    n_name = col_in1.text_input("Asset Name", placeholder="삼성전자")
-    n_ticker = col_in2.text_input("Ticker Symbol", placeholder="005930.KS")
-    if col_in3.button("Add to Terminal"):
+    n_name = col_in1.text_input("Asset Name (종목명)", placeholder="예: 삼성전자")
+    n_ticker = col_in2.text_input("Ticker Symbol (티커)", placeholder="예: 005930.KS")
+    if col_in3.button("Add (추가)"):
         if n_name and n_ticker:
             st.session_state.my_portfolio[n_name] = n_ticker
             st.rerun()
@@ -180,43 +137,68 @@ with tab1:
         data = analyze_stock_quant(tk)
         if data:
             with p_cols[i % 2]:
-                st.markdown(f"### {name} ({tk})")
-                st.metric("Market Price", f"{data['Price']:,.2f}", f"Entry Probability: {data['Probability']}%")
-                
-                # 퀀트 인사이트 카드 출력
-                st.markdown(get_quant_analysis_html(data), unsafe_allow_html=True)
-                
-                if st.button(f"Remove Asset", key=f"del_{tk}"):
-                    del st.session_state.my_portfolio[name]
-                    st.rerun()
-                
-                # 차트 출력
-                df_chart = data['df'][-100:]
-                fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
-                fig.add_trace(go.Candlestick(x=df_chart.index, open=df_chart['Open'], high=df_chart['High'], low=df_chart['Low'], close=df_chart['Close'], name="Price"), row=1, col=1)
-                fig.add_trace(go.Scatter(x=df_chart.index, y=ta.volatility.BollingerBands(df_chart['Close']).bollinger_hband(), line=dict(color='rgba(0,122,255,0.2)'), name="BB Upper"), row=1, col=1)
-                fig.add_trace(go.Scatter(x=df_chart.index, y=ta.volatility.BollingerBands(df_chart['Close']).bollinger_lband(), line=dict(color='rgba(0,122,255,0.2)'), fill='tonexty', name="BB Lower"), row=1, col=1)
-                fig.add_trace(go.Bar(x=df_chart.index, y=df_chart['Volume'], name="Volume", marker_color="#E5E5EA"), row=2, col=1)
-                fig.update_layout(height=400, template="plotly_white", margin=dict(l=0,r=0,t=0,b=0), xaxis_rangeslider_visible=False, showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
+                with st.container():
+                    st.markdown(f"""
+                    <div class="quant-card">
+                        <div style="font-size: 14px; color: #8E8E93; font-weight: 600;">{name} ({tk})</div>
+                        <div style="font-size: 32px; font-weight: 800; color: #1C1C1E; margin: 8px 0;">{data['Price']:,.2f}</div>
+                        <div style="background-color: #007AFF15; color: #007AFF; padding: 12px; border-radius: 12px; font-weight: 700; text-align: center; font-size: 16px;">
+                            승률 점수: {data['Probability']}/100 ➔ {data['Verdict']}
+                        </div>
+                        <div style="margin-top: 15px; font-size: 13px; color: #3A3A3C; line-height: 1.8;">
+                            • <b>RSI (과열 지표):</b> {data['RSI']} (30↓ 과매도, 70↑ 과매수)<br>
+                            • <b>MACD (추세 강도):</b> {data['MACD_Trend']}<br>
+                            • <b>BB Position (가격 위치):</b> {data['BB_Pos_Val']:.1f}% (0% 바닥, 100% 천장)
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    if st.button(f"목록에서 제거", key=f"del_{tk}"):
+                        del st.session_state.my_portfolio[name]
+                        st.rerun()
 
-# [탭 2/3 생략 및 탭3 프롬프트 강화]
+# [탭 2: 시장 스크리닝 (한국/미국 유니버스 100선)]
+with tab2:
+    st.markdown("### 🔍 Market Universe Screening (시장별 50선 전수 조사)")
+    c_kr, c_us = st.columns(2)
+    
+    def get_universe_df(stock_dict):
+        results = []
+        for tk, name in stock_dict.items():
+            res = analyze_stock_quant(tk)
+            if res:
+                results.append({
+                    "Asset (자산)": name, "Score (점수)": res['Probability'],
+                    "Signal (신호)": res['Verdict'], "RSI": res['RSI'], "Trend (추세)": res['MACD_Trend']
+                })
+        return pd.DataFrame(results)
+
+    with c_kr:
+        st.markdown("🇰🇷 **KOSPI & KOSDAQ Top 50**")
+        st.dataframe(get_universe_df(KR_STOCKS), use_container_width=True, hide_index=True, column_config={"Score (점수)": st.column_config.ProgressColumn(min_value=0, max_value=100)})
+
+    with c_us:
+        st.markdown("🇺🇸 **S&P 500 & NASDAQ Top 50**")
+        st.dataframe(get_universe_df(US_STOCKS), use_container_width=True, hide_index=True, column_config={"Score (점수)": st.column_config.ProgressColumn(min_value=0, max_value=100)})
+
+# [탭 3: AI Research (전문가용 리포트)]
 with tab3:
-    st.markdown("### 🏛️ Institutional Daily Research")
+    st.markdown("### 🏛️ Institutional Daily Research (기관급 전략 리포트)")
     if gemini_client:
-        market_news = "미국 국채 금리 변동성, 반도체 공급망 재편 이슈, 빅테크 실적 발표 전야"
-        if st.button("Generate Quant Report"):
-            with st.spinner("Analyzing global market data..."):
+        market_news = "미국 금리 인하 지연 가능성, AI 반도체 수급 불균형, 지정학적 에너지 가격 변동"
+        if st.button("Generate Quant Report (리포트 생성)"):
+            with st.spinner("Analyzing Global Data..."):
                 prompt = f"""
-                당신은 골드만삭스의 시니어 퀀트 애널리스트입니다. 
-                시장 데이터[{market_news}]를 바탕으로 기관 투자자용 리포트를 작성하세요.
-                내용에는 반드시 다음이 포함되어야 합니다:
-                1. 주요 기술적 지표 변동 사항 (RSI, 거래량 중심)
-                2. 통계적 확률에 기반한 섹터별 로테이션 전략
-                3. 향후 48시간 내 발생 가능한 테일 리스크 및 대응 매뉴얼
+                당신은 월스트리트의 시니어 퀀트 애널리스트입니다.
+                다음 키워드[{market_news}]를 바탕으로 전문적인 'Market Insider Report'를 작성하세요.
+                내용은 다음을 포함해야 합니다:
+                1. 주요 기술적 지표 변동 상황 (RSI, 거래량 중심 분석)
+                2. 통계적 확률에 기반한 진입/청산 전략
+                3. 향후 리스크 시나리오 및 투자자 대응 가이드
+                최대한 직관적이지만 전문 용어와 한국어 설명을 병기하여 작성해주세요.
                 """
                 try:
                     res = gemini_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                     st.markdown(res.text)
                 except Exception as e:
-                    st.error(f"Quota exceeded or Error: {e}")
+                    st.error(f"Quota error or Server Busy: {e}")
