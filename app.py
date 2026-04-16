@@ -47,24 +47,42 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. 직관적인 AI 해설 생성 함수 ---
+# --- 2. 직관적인 AI 수치 기반 인사이트 생성 함수 (수정됨) ---
 def get_easy_explanation(rsi, macd_trend, bb_val, verdict):
-    rsi_text = "사람들이 공포에 질려 다 팔아버렸어요! (바닥권 진입 가능성)" if rsi <= 35 else "너도나도 사겠다고 몰려들어 거품이 조금 꼈습니다." if rsi >= 70 else "사는 사람과 파는 평행하게 눈치를 보고 있습니다."
-    macd_text = "주가가 위로 올라가려는 '순풍'을 탔습니다." if macd_trend == "상승" else "지금은 주가가 아래로 밀리는 '역풍'이 불고 있네요."
-    bb_text = "평소 놀던 가격대의 맨 밑바닥까지 떨어졌어요. 튀어 오를 자리를 찾고 있습니다." if bb_val <= 10 else "평소 가격대의 지붕을 뚫고 나갔습니다. 다시 내려올 확률이 높아요." if bb_val >= 90 else "평소 움직이는 정상적인 가격대 안에서 얌전히 움직이고 있습니다."
+    # 1. RSI 수치 분석
+    if rsi <= 35:
+        rsi_text = f"현재 지수는 <b>{rsi}</b>로 35 이하입니다. 투자자들이 공포에 질려 과매도한 상태로, 기술적 반등을 노려볼 수 있는 바닥권 진입 가능성이 높습니다."
+    elif rsi >= 70:
+        rsi_text = f"현재 지수는 <b>{rsi}</b>로 70 이상입니다. 단기 매수세가 강하게 몰려 거품이 낀 과매수 상태이며, 곧 차익 실현 매물로 인한 조정이 올 수 있습니다."
+    else:
+        rsi_text = f"현재 지수는 <b>{rsi}</b>로 중립 구간(35~70)에 있습니다. 과열이나 침체 없이 매수와 매도세가 팽팽하게 균형을 이루고 있습니다."
+
+    # 2. MACD 추세 분석
+    if macd_trend == "상승":
+        macd_text = "단기 이동평균선이 장기 이동평균선 위에 위치하는 <b>골든크로스(상승 추세)</b> 구간입니다. 주가가 위로 밀고 올라가려는 강한 모멘텀이 형성되어 있습니다."
+    else:
+        macd_text = "단기 이동평균선이 장기 이동평균선 아래에 위치하는 <b>데드크로스(하락 추세)</b> 구간입니다. 현재 지속적인 하방 압력을 받고 있으므로 진입에 주의가 필요합니다."
+
+    # 3. 볼린저밴드 위치 분석
+    if bb_val <= 10:
+        bb_text = f"현재 가격은 밴드 내 <b>{bb_val:.1f}%</b> 위치에 있습니다. 20일 이동평균 기준 하단 지지선(10% 미만)에 도달해 있어 하락세가 제한될 확률이 높습니다."
+    elif bb_val >= 90:
+        bb_text = f"현재 가격은 밴드 내 <b>{bb_val:.1f}%</b> 위치에 있습니다. 20일 이동평균 상단 저항선(90% 이상)을 뚫고 나갔으므로 평균으로 회귀하려는 하락 조정을 대비해야 합니다."
+    else:
+        bb_text = f"현재 가격은 밴드 내 <b>{bb_val:.1f}%</b> 위치에 있습니다. 정상적인 가격 변동폭(10~90%) 안에서 안정적인 추세를 그리며 움직이고 있습니다."
     
     html = f"""
     <div style="background-color: #F8F8F9; border-radius: 18px; padding: 20px; margin-top: 8px; margin-bottom: 24px; border: 1px solid #E5E5EA;">
-        <div style="font-size: 15px; color: #1C1C1E; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center;">
-            <span style="font-size: 18px; margin-right: 6px;">🤖</span> AI의 쉬운 차트 해설
+        <div style="font-size: 15px; color: #1C1C1E; font-weight: 700; margin-bottom: 14px; display: flex; align-items: center;">
+            <span style="font-size: 18px; margin-right: 6px;">📊</span> 지표 기반 데이터 인사이트
         </div>
-        <div style="font-size: 13.5px; color: #3A3A3C; line-height: 1.7;">
-            <b>🔥 시장 심리:</b> {rsi_text}<br>
-            <b>💨 주가 바람:</b> {macd_text}<br>
-            <b>📏 가격 위치:</b> {bb_text}
+        <div style="font-size: 13.5px; color: #3A3A3C; line-height: 1.8;">
+            <b>🔥 과열/침체 (RSI):</b> {rsi_text}<br>
+            <b>💨 단기 모멘텀 (MACD):</b> {macd_text}<br>
+            <b>📏 가격 밴드 위치 (BB):</b> {bb_text}
         </div>
         <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #E5E5EA; color: #007AFF; font-weight: 700; font-size: 14px;">
-            💡 종합 결론 ➔ {verdict}
+            💡 종합 투자의견 ➔ {verdict}
         </div>
     </div>
     """
@@ -145,8 +163,8 @@ tab1, tab2, tab3 = st.tabs(["포트폴리오", "시장 스크리닝", "AI 브리
 with tab1:
     st.markdown("<h3 style='color: #1C1C1E; font-weight: 700;'>나의 종목 관리</h3>", unsafe_allow_html=True)
     col_a, col_b, col_c = st.columns([2, 2, 1])
-    n_name = col_a.text_input("종목명 입력", placeholder="예: 삼성전자")
-    n_ticker = col_b.text_input("티커 입력", placeholder="예: 005930.KS")
+    n_name = col_a.text_input("종목명 입력", placeholder="예: 아이온큐")
+    n_ticker = col_b.text_input("티커 입력", placeholder="예: IONQ")
     st.markdown("""<style>div.stButton {margin-top: 28px;}</style>""", unsafe_allow_html=True)
     if col_c.button("추가하기"):
         if n_name and n_ticker:
@@ -218,13 +236,11 @@ with tab2:
 with tab3:
     st.markdown("<h3 style='color: #1C1C1E; font-weight: 700;'>Gemini 데일리 브리핑</h3>", unsafe_allow_html=True)
     if gemini_client:
-        # 이 변수에 뉴스 헤드라인들이나 시장 키워드들을 넣어주면 AI가 알아서 살을 붙여 보고서를 씁니다.
         market_news = "기술주 전반 조정, 반도체 섹터 변동성 확대, 금리 인하 기대감 후퇴, 글로벌 지정학적 긴장감 잔존"
         
-        # 프롬프트 엔지니어링: AI에게 역할과 명확한 출력 양식을 부여합니다.
         prompt = f"""
         당신은 월스트리트의 최고 투자 전략가입니다.
-        다음 시장 키워드들을 분석하여, 초보 투자자도 읽기 쉬운 '데일리 마켓 브리핑'을 작성해주세요.
+        다음 시장 키워드들을 분석하여, 투자자들이 실질적인 인사이트를 얻을 수 있는 '데일리 마켓 브리핑'을 작성해주세요.
         시장 키워드: [{market_news}]
 
         반드시 다음 양식을 지켜서 마크다운(Markdown)으로 깔끔하게 출력해주세요:
@@ -249,8 +265,6 @@ with tab3:
                             model='gemini-2.5-flash', 
                             contents=prompt
                         )
-                        
-                        # st.success 대신 일반 markdown으로 출력하면 보고서 양식(헤딩, 굵은 글씨 등)이 훨씬 예쁘게 렌더링됩니다.
                         st.markdown(res.text)
                         break 
                         
