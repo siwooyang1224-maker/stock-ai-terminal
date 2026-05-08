@@ -102,7 +102,9 @@ st.markdown("""
 @st.cache_data(ttl=300)
 def analyze_stock_quant(ticker):
     try:
-        df = yf.download(ticker, period="1y", progress=False).dropna()
+        df = yf.download(ticker, period="1y", progress=False)
+        if df.empty: return None
+        df = df.ffill().bfill() # 결측치를 앞뒤 데이터로 채워 데이터 보존
         if df.empty or len(df) < 50: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
         
