@@ -23,7 +23,6 @@ PORTFOLIO_FILE = "my_portfolio.json"
 DEFAULT_PORTFOLIO = {"SK하이닉스": "000660.KS", "TSLL": "TSLL"}
 
 def load_portfolio():
-    # 파일이 존재하면 읽어오고, 없으면 기본 포트폴리오 반환
     if os.path.exists(PORTFOLIO_FILE):
         try:
             with open(PORTFOLIO_FILE, "r", encoding="utf-8") as f:
@@ -33,7 +32,6 @@ def load_portfolio():
     return DEFAULT_PORTFOLIO.copy()
 
 def save_portfolio(portfolio):
-    # 포트폴리오 변동 시 파일에 덮어쓰기
     with open(PORTFOLIO_FILE, "w", encoding="utf-8") as f:
         json.dump(portfolio, f, ensure_ascii=False, indent=4)
 
@@ -102,8 +100,11 @@ st.markdown("""
 @st.cache_data(ttl=300)
 def analyze_stock_quant(ticker):
     try:
-        df = yf.download(ticker, period="1y", progress=False).dropna()
-        if df.empty or len(df) < 50: return None
+        df = yf.download(ticker, period="1y", progress=False)
+        if df.empty: return None
+        # 결측치 방어를 위한 ffill 적용
+        df = df.ffill().dropna()
+        if len(df) < 50: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
         
         bb = ta.volatility.BollingerBands(df['Close'])
@@ -118,6 +119,10 @@ def analyze_stock_quant(ticker):
         mfi = ta.volume.money_flow_index(df['High'], df['Low'], df['Close'], df['Volume']).iloc[-1]
         atr = ta.volatility.average_true_range(df['High'], df['Low'], df['Close']).iloc[-1]
         atr_pct = (atr / curr_price) * 100 if curr_price != 0 else 0
+        
+        # 🟢 [추가된 로직] 차트 기반 적정 매수/매도 목표액 (최근 20일 기준)
+        recent_high = df['High'].tail(20).max()  # 단기 저항선 (매도 목표)
+        recent_low = df['Low'].tail(20).min()    # 단기 지지선 (매수 목표)
         
         score = 50.0 
         if m_val > s_val:
@@ -153,7 +158,8 @@ def analyze_stock_quant(ticker):
         return {
             "Ticker": ticker, "Price": curr_price, "RSI": round(rsi, 2), "MACD_Status": "Bullish Cross" if m_val > s_val else "Bearish Cross",
             "BB_Pos": round(bb_pos, 1), "ADX": round(adx, 1), "MFI": round(mfi, 1), "ATR": round(atr, 2), "ATR_Pct": round(atr_pct, 2),
-            "Verdict": verdict, "Conf_Str": conf_str, "Conf_Val": conf_val, "Conf_Bg": conf_bg, "Score": final_score, "Color": color, "df": df
+            "Verdict": verdict, "Conf_Str": conf_str, "Conf_Val": conf_val, "Conf_Bg": conf_bg, "Score": final_score, "Color": color, "df": df,
+            "Resist_Price": recent_high, "Support_Price": recent_low
         }
     except: return None
 
@@ -194,13 +200,12 @@ with tab1:
     if col_reg3.button("Register Asset (등록)"):
         if n_name and n_ticker:
             st.session_state.my_portfolio[n_name] = n_ticker
-            save_portfolio(st.session_state.my_portfolio) # 파일에 저장
+            save_portfolio(st.session_state.my_portfolio)
             st.rerun()
 
     st.markdown("---")
     
     p_cols = st.columns(2)
-    # 딕셔너리 크기가 루프 중 변경되는 것을 막기 위해 list로 변환하여 순회
     for i, (name, tk) in enumerate(list(st.session_state.my_portfolio.items())):
         data = analyze_stock_quant(tk)
         if data:
@@ -224,7 +229,11 @@ with tab1:
                     </div>
                     <table class="data-table">
                         <tr><td style="color:#8E8E93;">Current Price (현재 주가)</td><td style="text-align:right; font-weight:700;">{data['Price']:,.2f}</td></tr>
-                        <tr><td style="color:#8E8E93;">RSI (심리 강도)</td><td style="text-align:right;">{data['RSI']}</td></tr>
+                        
+                        <tr style="background-color: #FFF5F5;"><td style="color:#8E8E93; font-weight:700;">🎯 Chart Resist. (단기 매도 목표가)</td><td style="text-align:right; font-weight:800; color:#FF3B30;">{data['Resist_Price']:,.2f}</td></tr>
+                        <tr style="background-color: #F6FFF8;"><td style="color:#8E8E93; font-weight:700;">🛡️ Chart Support (단기 매수 목표가)</td><td style="text-align:right; font-weight:800; color:#00873C;">{data['Support_Price']:,.2f}</td></tr>
+                        
+                        <tr style="border-top: 2px solid #F1F3F5;"><td style="color:#8E8E93;">RSI (심리 강도)</td><td style="text-align:right;">{data['RSI']}</td></tr>
                         <tr><td style="color:#8E8E93;">MACD Momentum (추세 모멘텀)</td><td style="text-align:right;">{data['MACD_Status']}</td></tr>
                         <tr><td style="color:#8E8E93;">BB Pos (가격 편차 위치)</td><td style="text-align:right;">{data['BB_Pos']}%</td></tr>
                         <tr style="border-top: 2px dashed #F1F3F5;"><td style="color:#8E8E93; font-weight:600;">ADX (추세 강도)</td><td style="text-align:right; font-weight:600; color:{'#D71920' if data['ADX'] > 25 else '#1C1C1E'};">{data['ADX']}</td></tr>
@@ -272,7 +281,7 @@ with tab1:
                 
                 if st.button(f"Close Asset {name}", key=f"del_{tk}"):
                     del st.session_state.my_portfolio[name]
-                    save_portfolio(st.session_state.my_portfolio) # 삭제 시 파일 저장
+                    save_portfolio(st.session_state.my_portfolio)
                     st.rerun()
 
 # [탭 2: 유니버스 스크리닝]
@@ -297,10 +306,12 @@ with tab2:
     }
     with c1:
         st.markdown("🇰🇷 **KOSPI & KOSDAQ Top 50**")
-        st.dataframe(get_screen_data(KR_STOCKS), use_container_width=True, hide_index=True, column_config=column_cfg)
+        df_kr = get_screen_data(KR_STOCKS)
+        if not df_kr.empty: st.dataframe(df_kr, use_container_width=True, hide_index=True, column_config=column_cfg)
     with c2:
         st.markdown("🇺🇸 **S&P 500 & NASDAQ Top 50**")
-        st.dataframe(get_screen_data(US_STOCKS), use_container_width=True, hide_index=True, column_config=column_cfg)
+        df_us = get_screen_data(US_STOCKS)
+        if not df_us.empty: st.dataframe(df_us, use_container_width=True, hide_index=True, column_config=column_cfg)
 
 # [탭 3: 매크로 및 정성 분석]
 with tab3:
