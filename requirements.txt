@@ -7,4 +7,3 @@ pandas
 numpy
 google-genai
 streamlit-autorefresh
-firebase-admin
