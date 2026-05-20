@@ -11,6 +11,11 @@ import json
 import os
 from streamlit_autorefresh import st_autorefresh
 
+# 🔴 [변경] Firebase DB 연동을 위한 라이브러리 로드
+import firebase_admin
+from firebase_admin import credentials
+from firebase_admin import firestore
+
 # --- 0. Gemini AI 보안 설정 ---
 if "GEMINI_API_KEY" in st.secrets:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
@@ -18,24 +23,36 @@ if "GEMINI_API_KEY" in st.secrets:
 else:
     gemini_client = None
 
-# --- 1. 데이터 영구 저장 로직 (Local JSON Persistence) ---
-PORTFOLIO_FILE = "my_portfolio.json"
-DEFAULT_PORTFOLIO = {"SK하이닉스": "000660.KS", "TSLL": "TSLL"}
+# --- 1. 데이터 영구 저장 로직 (Firebase DB 연동) ---
+# Streamlit Secrets에 저장된 [firebase] 마스터키를 읽어와 DB 연결 인증을 수행합니다.
+if not firebase_admin._apps:
+    cred = credentials.Certificate(dict(st.secrets["firebase"]))
+    firebase_admin.initialize_app(cred)
+
+db = firestore.client()
+# investor 컬렉션의 my_portfolio 문서에 투자자님의 포트폴리오를 영구 저장합니다.
+doc_ref = db.collection("investor").document("my_portfolio")
+
+# 초기 세팅이 전혀 없을 경우를 대비한 기본 포트폴리오 (하이닉스, TSLL, AMDL 완벽 반영)
+DEFAULT_PORTFOLIO = {"SK하이닉스": "000660.KS", "TSLL": "TSLL", "AMDL": "AMDL"}
 
 def load_portfolio():
-    # 파일이 존재하면 읽어오고, 없으면 기본 포트폴리오 반환
-    if os.path.exists(PORTFOLIO_FILE):
-        try:
-            with open(PORTFOLIO_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
+    try:
+        doc = doc_ref.get()
+        if doc.exists:
+            return doc.to_dict()  # 🟢 서버가 리부트되어도 무조건 Firebase DB에서 데이터를 당겨옵니다.
+        else:
+            doc_ref.set(DEFAULT_PORTFOLIO)
             return DEFAULT_PORTFOLIO.copy()
-    return DEFAULT_PORTFOLIO.copy()
+    except Exception as e:
+        st.error(f"DB 로딩 중 오류 발생 (터미널 오프라인 모드): {e}")
+        return DEFAULT_PORTFOLIO.copy()
 
 def save_portfolio(portfolio):
-    # 포트폴리오 변동 시 파일에 덮어쓰기
-    with open(PORTFOLIO_FILE, "w", encoding="utf-8") as f:
-        json.dump(portfolio, f, ensure_ascii=False, indent=4)
+    try:
+        doc_ref.set(portfolio)  # 🟢 종목을 추가하거나 삭제하면 Firebase 클라우드 DB에 즉각 영구 저장됩니다.
+    except Exception as e:
+        st.error(f"DB 저장 중 오류 발생: {e}")
 
 # --- 2. 유니버스 데이터 (KR/US Top 50) ---
 KR_STOCKS = {
@@ -119,6 +136,10 @@ def analyze_stock_quant(ticker):
         atr = ta.volatility.average_true_range(df['High'], df['Low'], df['Close']).iloc[-1]
         atr_pct = (atr / curr_price) * 100 if curr_price != 0 else 0
         
+        # 🟢 [추가] 차트 기반 적정 매수/매도액 계산 로직 (최근 20거래일 기준 최고/최저가 저항지지선)
+        recent_high = df['High'].tail(20).max()
+        recent_low = df['Low'].tail(20).min()
+        
         score = 50.0 
         if m_val > s_val:
             score += 15
@@ -153,7 +174,9 @@ def analyze_stock_quant(ticker):
         return {
             "Ticker": ticker, "Price": curr_price, "RSI": round(rsi, 2), "MACD_Status": "Bullish Cross" if m_val > s_val else "Bearish Cross",
             "BB_Pos": round(bb_pos, 1), "ADX": round(adx, 1), "MFI": round(mfi, 1), "ATR": round(atr, 2), "ATR_Pct": round(atr_pct, 2),
-            "Verdict": verdict, "Conf_Str": conf_str, "Conf_Val": conf_val, "Conf_Bg": conf_bg, "Score": final_score, "Color": color, "df": df
+            "Verdict": verdict, "Conf_Str": conf_str, "Conf_Val": conf_val, "Conf_Bg": conf_bg, "Score": final_score, "Color": color, "df": df,
+            # 🟢 UI에 꽂아줄 가격 변수 추가 반환
+            "Resist_Price": recent_high, "Support_Price": recent_low
         }
     except: return None
 
@@ -180,7 +203,7 @@ def get_macro_data():
 # --- 6. 대시보드 메인 ---
 st.markdown("<h2 style='text-align: left; color: #1C1C1E; font-weight: 900; letter-spacing: -1px;'>ALPHA TERMINAL <span style='color:#00529B;'>QUANT-INSIGHT</span></h2>", unsafe_allow_html=True)
 
-# 메모리 초기화 방지: 파일에서 포트폴리오 불러오기
+# 메모리 초기화 방지: Firebase DB에서 포트폴리오 불러오기
 if 'my_portfolio' not in st.session_state:
     st.session_state.my_portfolio = load_portfolio()
 
@@ -194,13 +217,12 @@ with tab1:
     if col_reg3.button("Register Asset (등록)"):
         if n_name and n_ticker:
             st.session_state.my_portfolio[n_name] = n_ticker
-            save_portfolio(st.session_state.my_portfolio) # 파일에 저장
+            save_portfolio(st.session_state.my_portfolio) # Firebase DB에 영구 저장 수행
             st.rerun()
 
     st.markdown("---")
     
     p_cols = st.columns(2)
-    # 딕셔너리 크기가 루프 중 변경되는 것을 막기 위해 list로 변환하여 순회
     for i, (name, tk) in enumerate(list(st.session_state.my_portfolio.items())):
         data = analyze_stock_quant(tk)
         if data:
@@ -215,6 +237,7 @@ with tab1:
                 elif atr_pct >= 2.0: atr_msg = f"ATR(변동성)은 주가의 **{atr_pct}%** 수준입니다. 일반적인 주식의 **[정상 변동폭]** 내에서 움직이고 있습니다."
                 else: atr_msg = f"ATR(변동성)은 주가의 **{atr_pct}%**에 불과한 **[저변동성 방어주]** 성향을 보입니다. 중장기 관점이 어울립니다."
 
+                # 🟢 오리지널 UI/UX 구조를 완벽하게 유지하면서, 가독성 높은 추천 매수/매도 행만 깔끔하게 추가 이식했습니다.
                 st.markdown(f"""
                 <div class="ib-card">
                     <div class="decision-label">{name} ({tk}) / Multi-Factor Intelligence</div>
@@ -224,7 +247,11 @@ with tab1:
                     </div>
                     <table class="data-table">
                         <tr><td style="color:#8E8E93;">Current Price (현재 주가)</td><td style="text-align:right; font-weight:700;">{data['Price']:,.2f}</td></tr>
-                        <tr><td style="color:#8E8E93;">RSI (심리 강도)</td><td style="text-align:right;">{data['RSI']}</td></tr>
+                        
+                        <tr style="background-color: #FFF4F4;"><td style="color:#8E8E93; font-weight:700;">🎯 Chart Resist. (단기 매도 목표가)</td><td style="text-align:right; font-weight:800; color:#FF3B30;">{data['Resist_Price']:,.2f}</td></tr>
+                        <tr style="background-color: #F4FFF4;"><td style="color:#8E8E93; font-weight:700;">🛡️ Chart Support (단기 매수 목표가)</td><td style="text-align:right; font-weight:800; color:#00873C;">{data['Support_Price']:,.2f}</td></tr>
+                        
+                        <tr style="border-top: 1px solid #F1F3F5;"><td style="color:#8E8E93;">RSI (심리 강도)</td><td style="text-align:right;">{data['RSI']}</td></tr>
                         <tr><td style="color:#8E8E93;">MACD Momentum (추세 모멘텀)</td><td style="text-align:right;">{data['MACD_Status']}</td></tr>
                         <tr><td style="color:#8E8E93;">BB Pos (가격 편차 위치)</td><td style="text-align:right;">{data['BB_Pos']}%</td></tr>
                         <tr style="border-top: 2px dashed #F1F3F5;"><td style="color:#8E8E93; font-weight:600;">ADX (추세 강도)</td><td style="text-align:right; font-weight:600; color:{'#D71920' if data['ADX'] > 25 else '#1C1C1E'};">{data['ADX']}</td></tr>
@@ -272,7 +299,7 @@ with tab1:
                 
                 if st.button(f"Close Asset {name}", key=f"del_{tk}"):
                     del st.session_state.my_portfolio[name]
-                    save_portfolio(st.session_state.my_portfolio) # 삭제 시 파일 저장
+                    save_portfolio(st.session_state.my_portfolio) # Firebase DB 연동 반영 삭제
                     st.rerun()
 
 # [탭 2: 유니버스 스크리닝]
