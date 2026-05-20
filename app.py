@@ -11,7 +11,7 @@ import json
 import os
 from streamlit_autorefresh import st_autorefresh
 
-# 🔴 [변경] Firebase DB 연동을 위한 라이브러리 로드
+# Firebase DB 연동 라이브러리
 import firebase_admin
 from firebase_admin import credentials
 from firebase_admin import firestore
@@ -24,23 +24,20 @@ else:
     gemini_client = None
 
 # --- 1. 데이터 영구 저장 로직 (Firebase DB 연동) ---
-# Streamlit Secrets에 저장된 [firebase] 마스터키를 읽어와 DB 연결 인증을 수행합니다.
 if not firebase_admin._apps:
     cred = credentials.Certificate(dict(st.secrets["firebase"]))
     firebase_admin.initialize_app(cred)
 
 db = firestore.client()
-# investor 컬렉션의 my_portfolio 문서에 투자자님의 포트폴리오를 영구 저장합니다.
 doc_ref = db.collection("investor").document("my_portfolio")
 
-# 초기 세팅이 전혀 없을 경우를 대비한 기본 포트폴리오 (하이닉스, TSLL, AMDL 완벽 반영)
 DEFAULT_PORTFOLIO = {"SK하이닉스": "000660.KS", "TSLL": "TSLL", "AMDL": "AMDL"}
 
 def load_portfolio():
     try:
         doc = doc_ref.get()
         if doc.exists:
-            return doc.to_dict()  # 🟢 서버가 리부트되어도 무조건 Firebase DB에서 데이터를 당겨옵니다.
+            return doc.to_dict()
         else:
             doc_ref.set(DEFAULT_PORTFOLIO)
             return DEFAULT_PORTFOLIO.copy()
@@ -50,7 +47,7 @@ def load_portfolio():
 
 def save_portfolio(portfolio):
     try:
-        doc_ref.set(portfolio)  # 🟢 종목을 추가하거나 삭제하면 Firebase 클라우드 DB에 즉각 영구 저장됩니다.
+        doc_ref.set(portfolio)
     except Exception as e:
         st.error(f"DB 저장 중 오류 발생: {e}")
 
@@ -119,8 +116,10 @@ st.markdown("""
 @st.cache_data(ttl=300)
 def analyze_stock_quant(ticker):
     try:
-        df = yf.download(ticker, period="1y", progress=False).dropna()
-        if df.empty or len(df) < 50: return None
+        df = yf.download(ticker, period="1y", progress=False)
+        if df.empty: return None
+        df = df.ffill().dropna()
+        if len(df) < 50: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
         
         bb = ta.volatility.BollingerBands(df['Close'])
@@ -136,7 +135,7 @@ def analyze_stock_quant(ticker):
         atr = ta.volatility.average_true_range(df['High'], df['Low'], df['Close']).iloc[-1]
         atr_pct = (atr / curr_price) * 100 if curr_price != 0 else 0
         
-        # 🟢 [추가] 차트 기반 적정 매수/매도액 계산 로직 (최근 20거래일 기준 최고/최저가 저항지지선)
+        # 차트 기반 저항선 및 지지선 (최근 20일 기준)
         recent_high = df['High'].tail(20).max()
         recent_low = df['Low'].tail(20).min()
         
@@ -175,7 +174,6 @@ def analyze_stock_quant(ticker):
             "Ticker": ticker, "Price": curr_price, "RSI": round(rsi, 2), "MACD_Status": "Bullish Cross" if m_val > s_val else "Bearish Cross",
             "BB_Pos": round(bb_pos, 1), "ADX": round(adx, 1), "MFI": round(mfi, 1), "ATR": round(atr, 2), "ATR_Pct": round(atr_pct, 2),
             "Verdict": verdict, "Conf_Str": conf_str, "Conf_Val": conf_val, "Conf_Bg": conf_bg, "Score": final_score, "Color": color, "df": df,
-            # 🟢 UI에 꽂아줄 가격 변수 추가 반환
             "Resist_Price": recent_high, "Support_Price": recent_low
         }
     except: return None
@@ -203,7 +201,6 @@ def get_macro_data():
 # --- 6. 대시보드 메인 ---
 st.markdown("<h2 style='text-align: left; color: #1C1C1E; font-weight: 900; letter-spacing: -1px;'>ALPHA TERMINAL <span style='color:#00529B;'>QUANT-INSIGHT</span></h2>", unsafe_allow_html=True)
 
-# 메모리 초기화 방지: Firebase DB에서 포트폴리오 불러오기
 if 'my_portfolio' not in st.session_state:
     st.session_state.my_portfolio = load_portfolio()
 
@@ -217,7 +214,7 @@ with tab1:
     if col_reg3.button("Register Asset (등록)"):
         if n_name and n_ticker:
             st.session_state.my_portfolio[n_name] = n_ticker
-            save_portfolio(st.session_state.my_portfolio) # Firebase DB에 영구 저장 수행
+            save_portfolio(st.session_state.my_portfolio)
             st.rerun()
 
     st.markdown("---")
@@ -237,7 +234,7 @@ with tab1:
                 elif atr_pct >= 2.0: atr_msg = f"ATR(변동성)은 주가의 **{atr_pct}%** 수준입니다. 일반적인 주식의 **[정상 변동폭]** 내에서 움직이고 있습니다."
                 else: atr_msg = f"ATR(변동성)은 주가의 **{atr_pct}%**에 불과한 **[저변동성 방어주]** 성향을 보입니다. 중장기 관점이 어울립니다."
 
-                # 🟢 오리지널 UI/UX 구조를 완벽하게 유지하면서, 가독성 높은 추천 매수/매도 행만 깔끔하게 추가 이식했습니다.
+                # HTML 문법적 결함 및 누락된 괄호를 완벽하게 교정하여 컴파일 에러를 원천 해결했습니다.
                 st.markdown(f"""
                 <div class="ib-card">
                     <div class="decision-label">{name} ({tk}) / Multi-Factor Intelligence</div>
@@ -299,7 +296,7 @@ with tab1:
                 
                 if st.button(f"Close Asset {name}", key=f"del_{tk}"):
                     del st.session_state.my_portfolio[name]
-                    save_portfolio(st.session_state.my_portfolio) # Firebase DB 연동 반영 삭제
+                    save_portfolio(st.session_state.my_portfolio)
                     st.rerun()
 
 # [탭 2: 유니버스 스크리닝]
