@@ -962,6 +962,157 @@ def render_macro_card(title, value, diff, unit="", inverse=False):
     """, unsafe_allow_html=True)
 
 
+
+def classify_score_band(score):
+    """점수를 사용자가 바로 읽을 수 있는 해석 구간으로 변환합니다."""
+    score = clamp(score)
+    if score >= 75:
+        return "강한 우호", "핵심 신호가 매우 좋습니다. 다만 과열 여부와 손익비를 함께 확인해야 합니다."
+    if score >= 65:
+        return "우호", "매수 후보로 볼 수 있지만 분할 진입과 손절 기준이 필요합니다."
+    if score >= 55:
+        return "중립 이상", "기존 보유는 가능하지만 신규 비중 확대는 신중한 구간입니다."
+    if score >= 45:
+        return "애매", "방향성이 뚜렷하지 않습니다. 가격·거래량 확인 후 판단하는 편이 좋습니다."
+    if score >= 35:
+        return "주의", "신호가 약합니다. 기존 보유자는 비중과 손절선을 먼저 점검해야 합니다."
+    return "위험", "하락/리스크 신호가 강합니다. 신규 진입은 피하고 리스크 관리가 우선입니다."
+
+
+def build_interpretation_memo(name, item, result):
+    """
+    각 종목 카드 아래에 표시할 '해석 메모'를 생성합니다.
+    단순 점수 나열이 아니라, 왜 최종 액션이 나왔는지 투자자 관점 문장으로 설명합니다.
+    """
+    ticker = result["ticker"]
+    row = result["row"]
+    trade = result["trade_plan"]
+
+    total_band, total_desc = classify_score_band(result["total_score"])
+    tech_band, tech_desc = classify_score_band(result["technical_score"])
+    rel_band, rel_desc = classify_score_band(result["relative_score"])
+    risk_band, risk_desc = classify_score_band(result["risk_score"])
+    news_band, news_desc = classify_score_band(result["qualitative_score"])
+    macro_band, macro_desc = classify_score_band(result["macro_score"])
+
+    strengths = []
+    cautions = []
+    checklist = []
+
+    if result["technical_score"] >= 65:
+        strengths.append("차트/모멘텀은 우호적입니다.")
+    elif result["technical_score"] <= 45:
+        cautions.append("차트 신호가 약해 추세 확인이 필요합니다.")
+
+    if result["relative_score"] >= 70:
+        strengths.append(f"벤치마크({result['benchmark']}) 대비 상대강도가 강합니다.")
+    elif result["relative_score"] <= 40:
+        cautions.append(f"벤치마크({result['benchmark']}) 대비 약한 흐름입니다.")
+
+    if result["risk_score"] <= 40:
+        cautions.append("Risk Quality가 낮아 변동성·낙폭 리스크가 큽니다. 비중 확대보다 손절선과 보유 비중을 먼저 봐야 합니다.")
+    elif result["risk_score"] >= 70:
+        strengths.append("변동성/낙폭 기준 리스크 품질은 양호합니다.")
+
+    if result["qualitative_score"] <= 40:
+        cautions.append("News/Event 점수가 낮습니다. 뉴스 제목 기반 점수라 과소/과대평가될 수 있으니 실제 악재인지 뉴스 탭에서 확인해야 합니다.")
+    elif result["qualitative_score"] >= 65:
+        strengths.append("최근 뉴스 플로우는 비교적 긍정적으로 잡힙니다.")
+
+    if result["macro_score"] <= 45:
+        cautions.append("매크로 환경은 우호적이지 않습니다. 금리·달러·변동성 지표가 부담일 수 있습니다.")
+    elif result["macro_score"] >= 65:
+        strengths.append("매크로 환경은 위험자산에 비교적 우호적입니다.")
+
+    rr = safe_float(trade.get("risk_reward"))
+    if rr >= 1.5:
+        strengths.append(f"손익비 R/R이 {rr:.2f}로 매매 구조는 양호합니다.")
+    elif rr > 0:
+        cautions.append(f"손익비 R/R이 {rr:.2f}로 충분히 매력적이지 않을 수 있습니다.")
+
+    if result.get("is_leveraged"):
+        cautions.append("레버리지 ETF라 장기 보유 시 변동성 손실과 리밸런싱 디케이를 별도로 고려해야 합니다.")
+
+    if row.get("Close", 0) < row.get("MA200", np.inf):
+        checklist.append("200일선 회복 여부")
+    else:
+        checklist.append("200일선 이탈 여부")
+
+    checklist.extend([
+        "거래량이 20일 평균 대비 1.5배 이상 붙는지",
+        "손절가를 종가 기준으로 깨는지",
+        "뉴스/Event 점수가 낮다면 실제 악재인지",
+        "Macro Fit이 50 이상으로 회복되는지"
+    ])
+
+    # 최종 한 줄 결론
+    if result["action"] in ["ADD", "ACCUMULATE"]:
+        one_liner = "추세와 상대강도는 우호적입니다. 다만 한 번에 몰아 사기보다 손절가와 목표 비중을 정하고 분할 접근하는 쪽이 낫습니다."
+    elif result["action"] == "HOLD":
+        one_liner = "기존 보유는 가능하지만, 신규 비중 확대는 리스크·뉴스·매크로 부담을 확인한 뒤 판단하는 구간입니다."
+    elif result["action"] == "WATCH":
+        one_liner = "아직 방향성이 애매합니다. 지지선 근처 반등이나 거래량 동반 돌파가 나올 때까지 관망하는 편이 좋습니다."
+    elif result["action"] == "TRIM":
+        one_liner = "보유 중이라면 일부 비중 축소나 손절선 재점검이 필요한 구간입니다. 신규 진입 매력은 낮습니다."
+    elif result["action"] == "RISK-OFF":
+        one_liner = "점수와 별개로 변동성/레버리지/매크로 리스크가 커서 비중 관리가 최우선입니다."
+    else:
+        one_liner = "신규 진입은 피하고 더 좋은 가격·신호·손익비가 나올 때까지 기다리는 편이 낫습니다."
+
+    # 평단/보유 여부 기반 문장
+    avg_price = safe_float(item.get("avg_price", 0))
+    qty = safe_float(item.get("quantity", 0))
+    holding_note = "평단/수량을 입력하면 보유자 관점의 손익 해석이 더 정확해집니다."
+    if avg_price > 0 and qty > 0:
+        if result["pnl_pct"] >= 15:
+            holding_note = f"현재 수익률이 {result['pnl_pct']:.2f}%로 높은 편입니다. 추가매수보다 익절/트레일링 스탑 기준을 먼저 정하는 게 좋습니다."
+        elif result["pnl_pct"] <= -10:
+            holding_note = f"현재 수익률이 {result['pnl_pct']:.2f}%입니다. 물타기 전 손절가와 투자 thesis 훼손 여부를 먼저 확인해야 합니다."
+        else:
+            holding_note = f"현재 수익률은 {result['pnl_pct']:.2f}%입니다. 보유 지속 여부는 손절가와 목표비중 기준으로 판단하세요."
+
+    return {
+        "one_liner": one_liner,
+        "holding_note": holding_note,
+        "score_table": pd.DataFrame([
+            ["Signal Score", result["total_score"], total_band, total_desc],
+            ["Technical", result["technical_score"], tech_band, tech_desc],
+            ["Relative", result["relative_score"], rel_band, rel_desc],
+            ["Risk Quality", result["risk_score"], risk_band, risk_desc],
+            ["News/Event", result["qualitative_score"], news_band, news_desc],
+            ["Macro Fit", result["macro_score"], macro_band, macro_desc],
+        ], columns=["항목", "점수", "판정", "해석"]),
+        "strengths": strengths or ["뚜렷한 강점 신호가 아직 부족합니다."],
+        "cautions": cautions or ["현재 점수상 큰 경고 신호는 제한적입니다."],
+        "checklist": checklist,
+    }
+
+
+def render_interpretation_memo(name, item, result):
+    memo = build_interpretation_memo(name, item, result)
+
+    st.markdown("##### 📝 해석 메모")
+    st.info(memo["one_liner"])
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("**좋게 보는 근거**")
+        for s in memo["strengths"][:5]:
+            st.markdown(f"- {s}")
+
+    with col_b:
+        st.markdown("**주의할 부분**")
+        for c in memo["cautions"][:6]:
+            st.markdown(f"- {c}")
+
+    st.caption(memo["holding_note"])
+
+    with st.expander("점수별 해석 자세히 보기", expanded=False):
+        st.dataframe(memo["score_table"], use_container_width=True, hide_index=True)
+        st.markdown("**다음 체크포인트**")
+        for point in memo["checklist"]:
+            st.markdown(f"- {point}")
+
 def render_asset_card(name, item, result):
     ticker, row, trade = result["ticker"], result["row"], result["trade_plan"]
     color, bg = action_style(result["action"])
