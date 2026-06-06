@@ -1150,11 +1150,22 @@ def render_asset_card(name, item, result):
     with c5: render_score("Macro Fit", result["macro_score"])
 
     st.markdown("##### Portfolio & Trade Plan")
+
+    # 긴 숫자를 한 metric에 "손절가 / 목표가" 형태로 함께 넣으면
+    # Streamlit이 좁은 컬럼에서 값을 말줄임표(...)로 잘라 표시합니다.
+    # 그래서 포트폴리오 현황과 진입/청산 계획을 2줄로 나누어 표시합니다.
     p1, p2, p3, p4 = st.columns(4)
     p1.metric("보유 평가금액", format_price(ticker, result["market_value"]), f"{result['current_weight']:.2f}% weight")
     p2.metric("평가손익", format_price(ticker, result["pnl"]), f"{result['pnl_pct']:.2f}%" if item.get("avg_price", 0) > 0 else "평단 미입력")
-    p3.metric("손절가 / 목표가", f"{format_price(ticker, trade['stop'])} / {format_price(ticker, trade['target'])}", f"R/R {safe_float(trade['risk_reward']):.2f}")
+    p3.metric("현재 비중", f"{result['current_weight']:.2f}%", f"Target {item.get('target_weight', 0):.1f}%")
     p4.metric("추천 추가 수량", f"{trade['suggested_add_qty']:,}", f"Risk budget {format_price(ticker, trade['risk_budget'])}")
+
+    st.markdown("##### Entry / Exit Plan")
+    e1, e2, e3, e4 = st.columns(4)
+    e1.metric("현재가", format_price(ticker, result["price"]))
+    e2.metric("손절가", format_price(ticker, trade["stop"]), f"-{((result['price'] - trade['stop']) / result['price'] * 100) if result['price'] > 0 else 0:.2f}%")
+    e3.metric("목표가", format_price(ticker, trade["target"]), f"+{((trade['target'] - result['price']) / result['price'] * 100) if result['price'] > 0 else 0:.2f}%")
+    e4.metric("손익비", f"{safe_float(trade['risk_reward']):.2f}x", "1.5x 이상 선호")
 
     st.markdown(f"""
     <div class="risk-box">
@@ -1163,7 +1174,8 @@ def render_asset_card(name, item, result):
         • 60일 연율화 변동성: {format_pct(row['Annual_Vol'])}<br>
         • 1년 최대낙폭 추정: {format_pct(row['MDD_1Y'])}<br>
         • 1주당 리스크: {format_price(ticker, trade['risk_per_share'])}<br>
-        • 목표 비중: {item.get('target_weight', 0):.1f}% / 현재 비중: {result['current_weight']:.1f}%
+        • 목표 비중: {item.get('target_weight', 0):.1f}% / 현재 비중: {result['current_weight']:.1f}%<br>
+        • 손절가는 ATR과 최근 지지선을 함께 고려하고, 목표가는 최근 저항선 또는 2.5ATR 기준을 함께 반영합니다.
     </div>
     """, unsafe_allow_html=True)
 
