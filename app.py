@@ -5,6 +5,8 @@ import sqlite3
 import logging
 from pathlib import Path
 from datetime import datetime
+from textwrap import dedent
+from html import escape
 
 import streamlit as st
 import yfinance as yf
@@ -963,27 +965,31 @@ def render_macro_card(title, value, diff, unit="", inverse=False):
 def render_asset_card(name, item, result):
     ticker, row, trade = result["ticker"], result["row"], result["trade_plan"]
     color, bg = action_style(result["action"])
-    st.markdown(f"""
+
+    # Streamlit Markdown이 빈 줄/들여쓰기 HTML을 코드블록으로 오해하지 않도록
+    # 1) 태그 문자열을 미리 만들고 2) dedent().strip()으로 정리해서 렌더링합니다.
+    leveraged_tag = "<span class='tag tag-orange'>Leveraged ETF</span>" if result.get("is_leveraged") else ""
+    asset_html = f"""
     <div class="ib-card">
-        <div class="label">{name} / {ticker} / Benchmark: {result['benchmark']}</div>
+        <div class="label">{escape(str(name))} / {escape(str(ticker))} / Benchmark: {escape(str(result['benchmark']))}</div>
         <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
             <div>
-                <div class="big-value" style="color:{color};">{result['action']}</div>
+                <div class="big-value" style="color:{color};">{escape(str(result['action']))}</div>
                 <span class="tag" style="background:{bg}; color:{color};">Signal Score {result['total_score']}/100</span>
-                <span class="tag tag-blue">Macro {result['macro_regime']}</span>
-                {"<span class='tag tag-orange'>Leveraged ETF</span>" if result["is_leveraged"] else ""}
+                <span class="tag tag-blue">Macro {escape(str(result['macro_regime']))}</span>{leveraged_tag}
             </div>
             <div style="text-align:right;">
                 <div class="label">Current Price</div>
-                <div style="font-size:24px; font-weight:900;">{format_price(ticker, result['price'])}</div>
+                <div style="font-size:24px; font-weight:900;">{escape(format_price(ticker, result['price']))}</div>
             </div>
         </div>
         <div class="explain-box">
-            <b>판단 요약:</b> {result['action_reason']}<br>
+            <b>판단 요약:</b> {escape(str(result['action_reason']))}<br>
             <b>주의:</b> 이 점수는 매수 확률이 아니라 기술적·상대강도·리스크·뉴스·매크로를 합친 의사결정 보조 점수입니다.
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """
+    st.markdown(dedent(asset_html).strip(), unsafe_allow_html=True)
 
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1: render_score("Technical", result["technical_score"])
@@ -1093,6 +1099,25 @@ tab1, tab2, tab3, tab4 = st.tabs(["[1] Portfolio Strategy", "[2] Universe Screen
 # TAB 1. PORTFOLIO STRATEGY
 # =========================================================
 with tab1:
+    with st.expander("📘 분석 결과 해석 가이드", expanded=True):
+        st.markdown("""
+        **1) 최상단 액션**  
+        `ADD`는 추가매수 후보, `ACCUMULATE`는 분할매수, `HOLD`는 보유 유지, `WATCH`는 관망, `TRIM`은 일부 축소, `AVOID`는 신규진입 회피, `RISK-OFF`는 리스크 관리 우선입니다.
+
+        **2) Signal Score**  
+        매수 확률이 아니라 기술적 지표, 시장 대비 상대강도, 리스크, 뉴스, 매크로를 합산한 의사결정 보조 점수입니다. 70점 이상은 우호적, 55~69점은 중립 이상, 45~54점은 애매, 45점 미만은 보수적으로 해석합니다.
+
+        **3) 세부 점수**  
+        - **Technical**: 이동평균, MACD, RSI, 볼린저밴드, 거래량 기반 차트 상태입니다. 70 이상이면 차트는 우호적입니다.  
+        - **Relative**: 벤치마크 대비 상대강도입니다. 한국 주식은 KOSPI/KOSDAQ, 미국 주식은 SPY/QQQ/SOXX 등과 비교합니다. 높을수록 시장보다 강합니다.  
+        - **Risk Quality**: 변동성, ATR, 낙폭, 레버리지 여부를 반영한 안전도입니다. 높을수록 안전하고, 낮을수록 비중 확대를 조심해야 합니다.  
+        - **News/Event**: 최근 뉴스 제목의 긍정/부정 키워드 기반 정성 점수입니다. 참고용이며 실제 공시와 실적을 함께 확인해야 합니다.  
+        - **Macro Fit**: VIX, 미국 10년물, 달러, QQQ, SOXX, HYG, 환율 등을 본 매크로 적합도입니다.
+
+        **4) Trade Plan**  
+        손절가, 목표가, 손익비, 추천 추가 수량을 함께 봐야 합니다. Signal Score가 높아도 손익비가 낮거나 Risk Quality가 낮으면 신규 매수는 신중하게 해석합니다.
+        """)
+
     st.markdown("### Portfolio Editor")
     st.caption("종목명, 티커, 평단가, 보유수량, 목표비중을 수정하면 저장됩니다. 로컬은 SQLite, 배포는 Supabase 설정 시 DB에 저장됩니다.")
 
