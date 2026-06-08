@@ -976,6 +976,154 @@ def render_macro_card(title, value, diff, unit="", inverse=False):
 
 
 
+def interpret_rsi_value(rsi):
+    rsi = safe_float(rsi, np.nan)
+    if pd.isna(rsi):
+        return "RSI 데이터를 해석할 수 없습니다."
+    if rsi < 30:
+        return "과매도권입니다. 단기 반등 가능성은 있지만, 하락 추세 중 과매도일 수도 있어 거래량 확인이 필요합니다."
+    if rsi < 40:
+        return "약세 심리가 우세합니다. 저가 매수보다 추세 회복 여부를 먼저 봐야 합니다."
+    if rsi < 50:
+        return "중립 이하입니다. 매수세가 강하다고 보기는 어렵고 추가 확인이 필요합니다."
+    if rsi <= 65:
+        return "건강한 상승 모멘텀 구간입니다. 과열은 아니면서 매수 심리가 살아 있습니다."
+    if rsi <= 75:
+        return "상승 모멘텀이 강하지만 단기 과열이 시작될 수 있어 추격매수는 분할 접근이 낫습니다."
+    return "과열권입니다. 강한 종목일 수 있지만 단기 차익실현이나 조정 리스크가 큽니다."
+
+
+def interpret_macd_value(row):
+    macd = safe_float(row.get("MACD"), np.nan)
+    signal = safe_float(row.get("MACD_Signal"), np.nan)
+    hist = safe_float(row.get("MACD_Hist"), np.nan)
+    if pd.isna(macd) or pd.isna(signal):
+        return "MACD 데이터를 해석할 수 없습니다."
+    if macd > signal and hist > 0:
+        return "상승 모멘텀이 우세합니다. 단기 추세는 긍정적이나 이미 많이 오른 구간인지 함께 봐야 합니다."
+    if macd > signal:
+        return "MACD가 시그널 위에 있어 추세는 우호적입니다. 다만 히스토그램 강도는 추가 확인이 필요합니다."
+    if hist < 0:
+        return "MACD가 시그널 아래이고 히스토그램도 약합니다. 단기 모멘텀이 꺾인 상태로 해석합니다."
+    return "MACD는 약세 쪽이지만 둔화될 가능성도 있습니다. 반전 확인 전까지는 보수적으로 봅니다."
+
+
+def interpret_ma_position(row):
+    close = safe_float(row.get("Close"), np.nan)
+    ma20 = safe_float(row.get("MA20"), np.nan)
+    ma50 = safe_float(row.get("MA50"), np.nan)
+    ma200 = safe_float(row.get("MA200"), np.nan)
+    if pd.isna(close) or pd.isna(ma200):
+        return "이동평균 데이터를 해석할 수 없습니다."
+    if close > ma20 > ma50 > ma200:
+        return "현재가가 주요 이동평균 위에 있고 정배열에 가깝습니다. 중장기 추세가 매우 우호적입니다."
+    if close > ma200 and close > ma50:
+        return "현재가가 50일선·200일선 위에 있습니다. 중장기 추세는 살아 있는 편입니다."
+    if close > ma200:
+        return "200일선 위라 장기 추세는 유지 중이지만, 단기 이동평균 회복 여부를 더 봐야 합니다."
+    return "200일선 아래입니다. 장기 추세가 약해진 상태라 신규 진입은 보수적으로 봐야 합니다."
+
+
+def interpret_bb_position(bb_pos):
+    bb_pos = safe_float(bb_pos, np.nan)
+    if pd.isna(bb_pos):
+        return "볼린저밴드 위치를 해석할 수 없습니다."
+    if bb_pos < 0:
+        return "밴드 하단을 이탈했습니다. 과매도 반등 가능성은 있지만 하락 압력도 강합니다."
+    if bb_pos < 20:
+        return "밴드 하단에 가깝습니다. 저가 매수 후보가 될 수 있으나 추세 훼손 여부를 확인해야 합니다."
+    if bb_pos <= 80:
+        return "밴드 중앙권입니다. 과열·과매도 신호가 약해 방향성 확인이 필요합니다."
+    if bb_pos <= 100:
+        return "밴드 상단권입니다. 강한 종목이지만 단기 과열과 조정 가능성을 함께 봐야 합니다."
+    return "밴드 상단을 돌파했습니다. 강한 추세일 수 있지만 추격매수 리스크가 커진 상태입니다."
+
+
+def interpret_adx_value(row):
+    adx = safe_float(row.get("ADX"), np.nan)
+    di_plus = safe_float(row.get("DI_Plus"), np.nan)
+    di_minus = safe_float(row.get("DI_Minus"), np.nan)
+    if pd.isna(adx):
+        return "ADX 데이터를 해석할 수 없습니다."
+    if adx < 20:
+        return "추세 강도가 약합니다. 횡보장 가능성이 커서 돌파 확인 전까지 신호 신뢰도가 낮습니다."
+    if adx < 25:
+        return "추세가 형성되는 초기 구간입니다. 방향성 확인이 필요합니다."
+    if di_plus > di_minus:
+        return "추세 강도가 높고 +DI가 우세합니다. 상승 추세의 힘이 강한 상태입니다."
+    return "추세 강도는 높지만 -DI가 우세합니다. 하락 추세의 힘이 강한 상태입니다."
+
+
+def interpret_mfi_value(mfi):
+    mfi = safe_float(mfi, np.nan)
+    if pd.isna(mfi):
+        return "MFI 데이터를 해석할 수 없습니다."
+    if mfi < 20:
+        return "자금 유출 또는 과매도 신호가 강합니다. 반등 가능성보다 수급 악화를 먼저 경계해야 합니다."
+    if mfi < 40:
+        return "자금 유입이 약한 편입니다. 가격 상승의 신뢰도가 높다고 보기 어렵습니다."
+    if mfi <= 60:
+        return "자금 흐름은 중립권입니다. 매수·매도 압력이 균형에 가깝습니다."
+    if mfi <= 80:
+        return "거래량을 동반한 자금 유입이 우호적입니다. 상승 추세 신뢰도가 높아집니다."
+    return "자금 유입은 강하지만 과열권입니다. 단기 차익실현 가능성을 함께 봐야 합니다."
+
+
+def interpret_volume_ratio(row, prev_row=None):
+    ratio = safe_float(row.get("Volume_Ratio"), np.nan)
+    if pd.isna(ratio):
+        return "거래량 데이터를 해석할 수 없습니다."
+    price_up = True
+    if prev_row is not None:
+        price_up = safe_float(row.get("Close"), 0) >= safe_float(prev_row.get("Close"), 0)
+    if ratio < 0.7:
+        return "평균보다 거래량이 적습니다. 시장 관심이 약해 신호 신뢰도가 낮을 수 있습니다."
+    if ratio <= 1.1:
+        return "평균 수준의 거래량입니다. 가격 움직임을 강하게 확인해주는 거래량은 아닙니다."
+    if ratio <= 1.5:
+        return "평균보다 거래량이 늘었습니다. 상승일이면 긍정, 하락일이면 매도 압력 증가로 해석합니다."
+    if price_up:
+        return "거래량이 크게 붙은 상승입니다. 수급이 동반된 강한 움직임으로 볼 수 있습니다."
+    return "거래량이 크게 붙은 하락입니다. 단기 매도 압력이 강해 리스크 관리가 필요합니다."
+
+
+def interpret_relative_strength(rs):
+    rs = safe_float(rs, np.nan)
+    if pd.isna(rs):
+        return "상대강도 데이터를 해석할 수 없습니다."
+    if rs >= 20:
+        return "벤치마크를 압도적으로 이겼습니다. 주도주 성격이 강하지만 단기 과열도 함께 점검해야 합니다."
+    if rs >= 8:
+        return "벤치마크 대비 뚜렷하게 강합니다. 시장보다 좋은 종목 흐름입니다."
+    if rs >= 3:
+        return "벤치마크보다 약간 강합니다. 상대적으로 양호한 흐름입니다."
+    if rs > -3:
+        return "벤치마크와 비슷한 흐름입니다. 종목 고유의 강한 차별화는 아직 제한적입니다."
+    if rs > -8:
+        return "벤치마크보다 약합니다. 종목 선택 매력이 떨어지는 구간입니다."
+    return "벤치마크 대비 크게 부진합니다. 기술적 반등보다 추세 회복 확인이 우선입니다."
+
+
+def build_factor_interpretation_table(result):
+    row = result["row"]
+    df = result.get("df", pd.DataFrame())
+    prev_row = None
+    if isinstance(df, pd.DataFrame) and len(df) >= 2:
+        prev_row = df.iloc[-2]
+
+    return pd.DataFrame([
+        ["RSI", f"{row['RSI']:.2f}", interpret_rsi_value(row["RSI"])],
+        ["MACD", "Bullish" if row["MACD"] > row["MACD_Signal"] else "Bearish", interpret_macd_value(row)],
+        ["MA Position", "Above MA200" if row["Close"] > row["MA200"] else "Below MA200", interpret_ma_position(row)],
+        ["BB Position", f"{row['BB_Pos']:.1f}%", interpret_bb_position(row["BB_Pos"])],
+        ["ADX", f"{row['ADX']:.2f}", interpret_adx_value(row)],
+        ["MFI", f"{row['MFI']:.2f}", interpret_mfi_value(row["MFI"])],
+        ["Volume Ratio", f"{row['Volume_Ratio']:.2f}x", interpret_volume_ratio(row, prev_row)],
+        ["Relative 20D", f"{result['rs_detail']['rs_20d']:.2f}%", interpret_relative_strength(result["rs_detail"]["rs_20d"])],
+        ["Relative 60D", f"{result['rs_detail']['rs_60d']:.2f}%", interpret_relative_strength(result["rs_detail"]["rs_60d"])],
+    ], columns=["Factor", "Value", "현재 값의 해석"])
+
+
 def classify_score_band(score):
     """점수를 사용자가 바로 읽을 수 있는 해석 구간으로 변환합니다."""
     score = clamp(score)
@@ -1192,17 +1340,8 @@ def render_asset_card(name, item, result):
     </div>
     """, unsafe_allow_html=True)
 
-    factor_table = pd.DataFrame([
-        ["RSI", f"{row['RSI']:.2f}", "50~65는 건강한 상승 모멘텀, 75 이상은 과열 가능성"],
-        ["MACD", "Bullish" if row["MACD"] > row["MACD_Signal"] else "Bearish", "추세 모멘텀 확인"],
-        ["MA Position", "Above MA200" if row["Close"] > row["MA200"] else "Below MA200", "중장기 추세 필터"],
-        ["BB Position", f"{row['BB_Pos']:.1f}%", "밴드 내 가격 위치"],
-        ["ADX", f"{row['ADX']:.2f}", "25 이상이면 추세 강도 존재"],
-        ["MFI", f"{row['MFI']:.2f}", "가격과 거래량을 함께 본 자금 흐름"],
-        ["Volume Ratio", f"{row['Volume_Ratio']:.2f}x", "20일 평균 거래량 대비 현재 거래량"],
-        ["Relative 20D", f"{result['rs_detail']['rs_20d']:.2f}%", "벤치마크 대비 20일 초과수익률"],
-        ["Relative 60D", f"{result['rs_detail']['rs_60d']:.2f}%", "벤치마크 대비 60일 초과수익률"],
-    ], columns=["Factor", "Value", "Meaning"])
+    factor_table = build_factor_interpretation_table(result)
+    st.markdown("##### Factor Detail - 현재 값 해석")
     st.dataframe(factor_table, use_container_width=True, hide_index=True)
 
     bt = backtest_technical_signal(ticker, horizon=20)
@@ -1275,41 +1414,29 @@ tab1, tab2, tab3, tab4 = st.tabs(["[1] Portfolio Strategy", "[2] Universe Screen
 # TAB 1. PORTFOLIO STRATEGY
 # =========================================================
 with tab1:
-    guide_html = """
-    <div class="ib-card" style="border-left: 5px solid #00529B;">
-        <div class="label">Guide</div>
-        <div style="font-size:19px; font-weight:900; margin:4px 0 14px 0;">분석 결과 해석 가이드</div>
+    with st.container(border=True):
+        st.caption("GUIDE")
+        st.markdown("### 분석 결과 해석 가이드")
+        st.markdown(
+            """
+**1) 최상단 액션**  
+`ADD`는 추가매수 후보, `ACCUMULATE`는 분할매수, `HOLD`는 보유 유지, `WATCH`는 관망, `TRIM`은 일부 축소, `AVOID`는 신규진입 회피, `RISK-OFF`는 리스크 관리 우선입니다.
 
-        <div class="explain-box" style="margin-top:0;">
-            <b>1) 최상단 액션</b><br>
-            <span style="color:#137333; font-weight:800;">ADD</span>는 추가매수 후보,
-            <span style="color:#137333; font-weight:800;">ACCUMULATE</span>는 분할매수,
-            <span style="color:#374151; font-weight:800;">HOLD</span>는 보유 유지,
-            <span style="color:#374151; font-weight:800;">WATCH</span>는 관망,
-            <span style="color:#B45309; font-weight:800;">TRIM</span>은 일부 축소,
-            <span style="color:#C5221F; font-weight:800;">AVOID</span>는 신규진입 회피,
-            <span style="color:#C5221F; font-weight:800;">RISK-OFF</span>는 리스크 관리 우선입니다.
-            <br><br>
+**2) Signal Score**  
+매수 확률이 아니라 기술적 지표, 시장 대비 상대강도, 리스크, 뉴스, 매크로를 합산한 의사결정 보조 점수입니다.  
+`70점 이상`은 우호적, `55–69점`은 중립 이상, `45–54점`은 애매, `45점 미만`은 보수적으로 해석합니다.
 
-            <b>2) Signal Score</b><br>
-            매수 확률이 아니라 기술적 지표, 시장 대비 상대강도, 리스크, 뉴스, 매크로를 합산한 의사결정 보조 점수입니다.<br>
-            <b>70점 이상</b>은 우호적, <b>55&ndash;69점</b>은 중립 이상, <b>45&ndash;54점</b>은 애매, <b>45점 미만</b>은 보수적으로 해석합니다.
-            <br><br>
+**3) 세부 점수**  
+- **Technical**: 이동평균, MACD, RSI, 볼린저밴드, 거래량 기반 차트 상태입니다. 70 이상이면 차트는 우호적입니다.
+- **Relative**: 벤치마크 대비 상대강도입니다. 한국 주식은 KOSPI/KOSDAQ, 미국 주식은 SPY/QQQ/SOXX 등과 비교합니다. 높을수록 시장보다 강합니다.
+- **Risk Quality**: 변동성, ATR, 낙폭, 레버리지 여부를 반영한 안전도입니다. 높을수록 안전하고 낮을수록 비중 확대를 조심해야 합니다.
+- **News/Event**: 최근 뉴스 제목의 긍정/부정 키워드 기반 정성 점수입니다. 참고용이며 실제 공시와 실적을 함께 확인해야 합니다.
+- **Macro Fit**: VIX, 미국 10년물, 달러, QQQ, SOXX, HYG, 환율 등을 본 매크로 적합도입니다.
 
-            <b>3) 세부 점수</b><br>
-            &bull; <b>Technical</b>: 이동평균, MACD, RSI, 볼린저밴드, 거래량 기반 차트 상태입니다. 70 이상이면 차트는 우호적입니다.<br>
-            &bull; <b>Relative</b>: 벤치마크 대비 상대강도입니다. 한국 주식은 KOSPI/KOSDAQ, 미국 주식은 SPY/QQQ/SOXX 등과 비교합니다. 높을수록 시장보다 강합니다.<br>
-            &bull; <b>Risk Quality</b>: 변동성, ATR, 낙폭, 레버리지 여부를 반영한 안전도입니다. 높을수록 안전하고, 낮을수록 비중 확대를 조심해야 합니다.<br>
-            &bull; <b>News/Event</b>: 최근 뉴스 제목의 긍정/부정 키워드 기반 정성 점수입니다. 참고용이며 실제 공시와 실적을 함께 확인해야 합니다.<br>
-            &bull; <b>Macro Fit</b>: VIX, 미국 10년물, 달러, QQQ, SOXX, HYG, 환율 등을 본 매크로 적합도입니다.
-            <br><br>
-
-            <b>4) Trade Plan</b><br>
-            손절가, 목표가, 손익비, 추천 추가 수량을 함께 봐야 합니다. Signal Score가 높아도 손익비가 낮거나 Risk Quality가 낮으면 신규 매수는 신중하게 해석합니다.
-        </div>
-    </div>
-    """
-    st.markdown(dedent(guide_html).strip(), unsafe_allow_html=True)
+**4) Trade Plan**  
+손절가, 목표가, 손익비, 추천 추가 수량을 함께 봐야 합니다. Signal Score가 높아도 손익비가 낮거나 Risk Quality가 낮으면 신규 매수는 신중하게 해석합니다.
+            """
+        )
 
     st.markdown("### Portfolio Editor")
     st.caption("종목명, 티커, 평단가, 보유수량, 목표비중을 수정하면 저장됩니다. 로컬은 SQLite, 배포는 Supabase 설정 시 DB에 저장됩니다.")
