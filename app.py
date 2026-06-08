@@ -136,7 +136,20 @@ LEVERAGED_ETFS = {
 st.markdown("""
 <style>
     @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
-    * { font-family: -apple-system, BlinkMacSystemFont, Pretendard, sans-serif !important; }
+
+    /*
+      IMPORTANT:
+      Streamlit uses a special icon font for tabs/expanders/select boxes.
+      Do NOT apply font-family to every element with `* { ... !important; }`.
+      If we do, icons such as the expander arrow are rendered as broken text
+      like `.arr...` or `arrow_drop_down`.
+    */
+    html, body, .stApp, .stMarkdown, .stText, .stCaption, .stMetric, .stButton, .stTabs,
+    .stDataFrame, .stTextInput, .stNumberInput, .stTextArea, .stSelectbox, .stRadio,
+    .stSlider, .stToggle, .stExpander, label, p, h1, h2, h3, h4, h5, h6, table, th, td {
+        font-family: -apple-system, BlinkMacSystemFont, Pretendard, sans-serif;
+    }
+
     .stApp { background-color: #F7F8FA; }
     .main-title { font-size: 31px; font-weight: 900; letter-spacing: -1px; color: #111827; margin-bottom: 0px; }
     .sub-title { font-size: 14px; color: #6B7280; margin-bottom: 24px; }
@@ -1262,24 +1275,41 @@ tab1, tab2, tab3, tab4 = st.tabs(["[1] Portfolio Strategy", "[2] Universe Screen
 # TAB 1. PORTFOLIO STRATEGY
 # =========================================================
 with tab1:
-    with st.expander("📘 분석 결과 해석 가이드", expanded=True):
-        st.markdown("""
-        **1) 최상단 액션**  
-        `ADD`는 추가매수 후보, `ACCUMULATE`는 분할매수, `HOLD`는 보유 유지, `WATCH`는 관망, `TRIM`은 일부 축소, `AVOID`는 신규진입 회피, `RISK-OFF`는 리스크 관리 우선입니다.
+    guide_html = """
+    <div class="ib-card" style="border-left: 5px solid #00529B;">
+        <div class="label">Guide</div>
+        <div style="font-size:19px; font-weight:900; margin:4px 0 14px 0;">분석 결과 해석 가이드</div>
 
-        **2) Signal Score**  
-        매수 확률이 아니라 기술적 지표, 시장 대비 상대강도, 리스크, 뉴스, 매크로를 합산한 의사결정 보조 점수입니다. 70점 이상은 우호적, 55~69점은 중립 이상, 45~54점은 애매, 45점 미만은 보수적으로 해석합니다.
+        <div class="explain-box" style="margin-top:0;">
+            <b>1) 최상단 액션</b><br>
+            <span style="color:#137333; font-weight:800;">ADD</span>는 추가매수 후보,
+            <span style="color:#137333; font-weight:800;">ACCUMULATE</span>는 분할매수,
+            <span style="color:#374151; font-weight:800;">HOLD</span>는 보유 유지,
+            <span style="color:#374151; font-weight:800;">WATCH</span>는 관망,
+            <span style="color:#B45309; font-weight:800;">TRIM</span>은 일부 축소,
+            <span style="color:#C5221F; font-weight:800;">AVOID</span>는 신규진입 회피,
+            <span style="color:#C5221F; font-weight:800;">RISK-OFF</span>는 리스크 관리 우선입니다.
+            <br><br>
 
-        **3) 세부 점수**  
-        - **Technical**: 이동평균, MACD, RSI, 볼린저밴드, 거래량 기반 차트 상태입니다. 70 이상이면 차트는 우호적입니다.  
-        - **Relative**: 벤치마크 대비 상대강도입니다. 한국 주식은 KOSPI/KOSDAQ, 미국 주식은 SPY/QQQ/SOXX 등과 비교합니다. 높을수록 시장보다 강합니다.  
-        - **Risk Quality**: 변동성, ATR, 낙폭, 레버리지 여부를 반영한 안전도입니다. 높을수록 안전하고, 낮을수록 비중 확대를 조심해야 합니다.  
-        - **News/Event**: 최근 뉴스 제목의 긍정/부정 키워드 기반 정성 점수입니다. 참고용이며 실제 공시와 실적을 함께 확인해야 합니다.  
-        - **Macro Fit**: VIX, 미국 10년물, 달러, QQQ, SOXX, HYG, 환율 등을 본 매크로 적합도입니다.
+            <b>2) Signal Score</b><br>
+            매수 확률이 아니라 기술적 지표, 시장 대비 상대강도, 리스크, 뉴스, 매크로를 합산한 의사결정 보조 점수입니다.<br>
+            <b>70점 이상</b>은 우호적, <b>55&ndash;69점</b>은 중립 이상, <b>45&ndash;54점</b>은 애매, <b>45점 미만</b>은 보수적으로 해석합니다.
+            <br><br>
 
-        **4) Trade Plan**  
-        손절가, 목표가, 손익비, 추천 추가 수량을 함께 봐야 합니다. Signal Score가 높아도 손익비가 낮거나 Risk Quality가 낮으면 신규 매수는 신중하게 해석합니다.
-        """)
+            <b>3) 세부 점수</b><br>
+            &bull; <b>Technical</b>: 이동평균, MACD, RSI, 볼린저밴드, 거래량 기반 차트 상태입니다. 70 이상이면 차트는 우호적입니다.<br>
+            &bull; <b>Relative</b>: 벤치마크 대비 상대강도입니다. 한국 주식은 KOSPI/KOSDAQ, 미국 주식은 SPY/QQQ/SOXX 등과 비교합니다. 높을수록 시장보다 강합니다.<br>
+            &bull; <b>Risk Quality</b>: 변동성, ATR, 낙폭, 레버리지 여부를 반영한 안전도입니다. 높을수록 안전하고, 낮을수록 비중 확대를 조심해야 합니다.<br>
+            &bull; <b>News/Event</b>: 최근 뉴스 제목의 긍정/부정 키워드 기반 정성 점수입니다. 참고용이며 실제 공시와 실적을 함께 확인해야 합니다.<br>
+            &bull; <b>Macro Fit</b>: VIX, 미국 10년물, 달러, QQQ, SOXX, HYG, 환율 등을 본 매크로 적합도입니다.
+            <br><br>
+
+            <b>4) Trade Plan</b><br>
+            손절가, 목표가, 손익비, 추천 추가 수량을 함께 봐야 합니다. Signal Score가 높아도 손익비가 낮거나 Risk Quality가 낮으면 신규 매수는 신중하게 해석합니다.
+        </div>
+    </div>
+    """
+    st.markdown(dedent(guide_html).strip(), unsafe_allow_html=True)
 
     st.markdown("### Portfolio Editor")
     st.caption("종목명, 티커, 평단가, 보유수량, 목표비중을 수정하면 저장됩니다. 로컬은 SQLite, 배포는 Supabase 설정 시 DB에 저장됩니다.")
