@@ -1,6 +1,7 @@
 import os
 import json
 import math
+import time
 import sqlite3
 import logging
 from pathlib import Path
@@ -14,6 +15,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
+import requests
 import ta
 
 try:
@@ -48,6 +50,10 @@ logging.basicConfig(level=logging.INFO)
 # 1. DEFAULT PORTFOLIO / STORAGE CONFIG
 # =========================================================
 DB_PATH = Path("data") / "portfolio.db"
+
+# 가격 데이터만 1분 단위로 재조회하기 위한 설정입니다.
+# 일봉 OHLCV 히스토리는 기존처럼 캐시를 유지하고, 현재가만 별도 API로 최신화합니다.
+PRICE_DATA_REFRESH_SECONDS = 60
 
 DEFAULT_PORTFOLIO = {
     "SK하이닉스": {
@@ -250,6 +256,206 @@ def benchmark_for(ticker):
     if ticker in ["AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "META", "TSLA", "NFLX", "ADBE", "CRM", "NOW"]:
         return "QQQ"
     return "SPY"
+
+
+def extract_korea_code(ticker):
+    """000660.KS -> 000660"""
+    return re.sub(r"\.(KS|KQ)$", "", str(ticker).upper().strip())
+
+
+def to_valid_price(value):
+    """문자열/숫자를 양수 float 가격으로 변환합니다."""
+    try:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.replace(",", "").strip()
+        value = float(value)
+        if not np.isfinite(value) or value <= 0:
+            return None
+        return value
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=PRICE_DATA_REFRESH_SECONDS + 5, show_spinner=False)
+def fetch_naver_current_price(ticker, price_minute_bucket):
+    """
+    한국 주식 현재가 조회.
+    yfinance 일봉 종가가 아니라 네이버 금융의 now 값을 우선 사용합니다.
+    price_minute_bucket이 1분마다 바뀌므로 가격 캐시도 1분 단위로 갱신됩니다.
+    """
+    code = extract_korea_code(ticker)
+    url = f"https://api.finance.naver.com/service/itemSummary.nhn?itemcode={code}"
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json,text/plain,*/*",
+        "Referer": "https://finance.naver.com/",
+    }
+
+    try:
+        response = requests.get(url, headers=headers, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        price = to_valid_price(data.get("now"))
+
+        if price is not None:
+            return {
+                "price": price,
+                "source": "NAVER_NOW_1MIN",
+                "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+    except Exception as e:
+        logging.info(f"Naver current price failed for {ticker}: {e}")
+
+    return {
+        "price": None,
+        "source": "NAVER_FAILED",
+        "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+@st.cache_data(ttl=PRICE_DATA_REFRESH_SECONDS + 5, show_spinner=False)
+def fetch_yfinance_latest_price(ticker, price_minute_bucket):
+    """
+    미국 주식/ETF 및 fallback용 최신가 조회.
+    1순위는 yfinance 1분봉 마지막 Close입니다.
+    """
+    try:
+        tk = yf.Ticker(ticker)
+
+        # 1순위: 1분봉 마지막 가격
+        try:
+            intraday = tk.history(period="1d", interval="1m", prepost=True, auto_adjust=False)
+            if intraday is not None and not intraday.empty and "Close" in intraday.columns:
+                close = intraday["Close"].dropna()
+                if not close.empty:
+                    price = to_valid_price(close.iloc[-1])
+                    if price is not None:
+                        return {
+                            "price": price,
+                            "source": "YF_1M_CLOSE_1MIN",
+                            "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        }
+        except Exception:
+            pass
+
+        # 2순위: 5분봉 마지막 가격
+        try:
+            intraday = tk.history(period="5d", interval="5m", prepost=True, auto_adjust=False)
+            if intraday is not None and not intraday.empty and "Close" in intraday.columns:
+                close = intraday["Close"].dropna()
+                if not close.empty:
+                    price = to_valid_price(close.iloc[-1])
+                    if price is not None:
+                        return {
+                            "price": price,
+                            "source": "YF_5M_CLOSE_FALLBACK",
+                            "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        }
+        except Exception:
+            pass
+
+        # 3순위: fast_info
+        try:
+            fast_info = tk.fast_info
+            for key in ["last_price", "lastPrice", "regularMarketPrice", "regular_market_price"]:
+                try:
+                    price = to_valid_price(fast_info.get(key))
+                    if price is not None:
+                        return {
+                            "price": price,
+                            "source": f"YF_FAST_{key}",
+                            "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        }
+                except Exception:
+                    pass
+                try:
+                    price = to_valid_price(getattr(fast_info, key))
+                    if price is not None:
+                        return {
+                            "price": price,
+                            "source": f"YF_FAST_{key}",
+                            "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        }
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # 4순위: 일봉 종가 fallback
+        try:
+            daily = tk.history(period="5d", interval="1d", auto_adjust=False)
+            if daily is not None and not daily.empty and "Close" in daily.columns:
+                close = daily["Close"].dropna()
+                if not close.empty:
+                    price = to_valid_price(close.iloc[-1])
+                    if price is not None:
+                        return {
+                            "price": price,
+                            "source": "YF_DAILY_CLOSE_FALLBACK",
+                            "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        }
+        except Exception:
+            pass
+
+    except Exception as e:
+        logging.info(f"yfinance latest price failed for {ticker}: {e}")
+
+    return {
+        "price": None,
+        "source": "PRICE_FAILED",
+        "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def fetch_latest_price(ticker, price_minute_bucket):
+    """
+    최종 최신 가격 조회 함수.
+    한국 주식은 네이버 현재가 우선, 미국 주식/ETF는 yfinance 1분봉 우선입니다.
+    """
+    ticker = str(ticker).strip().upper()
+
+    if is_korea_ticker(ticker):
+        naver = fetch_naver_current_price(ticker, price_minute_bucket)
+        if naver.get("price") is not None:
+            return naver
+
+    return fetch_yfinance_latest_price(ticker, price_minute_bucket)
+
+
+def apply_latest_price_to_daily_df(df, latest_price):
+    """
+    기존 일봉 데이터의 마지막 Close를 최신 가격으로 교체합니다.
+    그래서 Technical / Relative / Risk Quality / Signal Score / 목표가·손절가가
+    전일 종가가 아니라 최신 가격 기준으로 계산됩니다.
+    """
+    if df is None or df.empty:
+        return df
+
+    latest_price = to_valid_price(latest_price)
+    if latest_price is None:
+        return df
+
+    df = df.copy()
+    last_idx = df.index[-1]
+    prev_close = to_valid_price(df.loc[last_idx, "Close"]) or latest_price
+
+    df.loc[last_idx, "Close"] = latest_price
+
+    if "High" in df.columns:
+        old_high = to_valid_price(df.loc[last_idx, "High"]) or latest_price
+        df.loc[last_idx, "High"] = max(old_high, latest_price, prev_close)
+
+    if "Low" in df.columns:
+        old_low = to_valid_price(df.loc[last_idx, "Low"]) or latest_price
+        df.loc[last_idx, "Low"] = min(old_low, latest_price, prev_close)
+
+    if "Open" in df.columns:
+        old_open = to_valid_price(df.loc[last_idx, "Open"]) or prev_close
+        df.loc[last_idx, "Open"] = old_open
+
+    return df
 
 
 # =========================================================
@@ -821,11 +1027,20 @@ def decide_action(total_score, risk_score, risk_reward, row, ticker, quantity):
 # =========================================================
 # 8. MAIN ANALYSIS
 # =========================================================
-@st.cache_data(ttl=300, show_spinner=False)
-def analyze_stock(ticker, account_value, risk_per_trade_pct, target_weight, avg_price, quantity, include_news=True):
+@st.cache_data(ttl=PRICE_DATA_REFRESH_SECONDS + 5, show_spinner=False)
+def analyze_stock(ticker, account_value, risk_per_trade_pct, target_weight, avg_price, quantity, include_news=True, price_minute_bucket=None):
+    if price_minute_bucket is None:
+        price_minute_bucket = int(time.time() // PRICE_DATA_REFRESH_SECONDS)
+
     df = fetch_price_data(ticker, period="2y")
     if df.empty or len(df) < 220:
         return None
+
+    # 현재가만 1분 단위로 별도 조회해서 마지막 일봉 Close에 반영합니다.
+    # 이 작업 이후에 지표를 계산하므로 모든 판단 점수와 목표가/손절가가 최신 가격 기준으로 계산됩니다.
+    latest_price_payload = fetch_latest_price(ticker, price_minute_bucket)
+    df = apply_latest_price_to_daily_df(df, latest_price_payload.get("price"))
+
     df = add_indicators(df).dropna(subset=["MA200", "RSI", "MACD", "ATR"])
     if len(df) < 2:
         return None
@@ -869,7 +1084,9 @@ def analyze_stock(ticker, account_value, risk_per_trade_pct, target_weight, avg_
         "total_score": total_score, "action": action, "action_reason": action_reason,
         "trade_plan": trade_plan, "rs_detail": rs_detail, "news_items": news_items, "qual_detail": qual_detail,
         "macro_notes": macro_notes, "market_value": float(market_value), "invested_value": float(invested_value),
-        "pnl": float(pnl), "pnl_pct": float(pnl_pct), "current_weight": float(current_weight), "is_leveraged": is_leveraged(ticker)
+        "pnl": float(pnl), "pnl_pct": float(pnl_pct), "current_weight": float(current_weight), "is_leveraged": is_leveraged(ticker),
+        "price_source": latest_price_payload.get("source", "UNKNOWN"),
+        "price_fetched_at": latest_price_payload.get("fetched_at", "")
     }
 
 
@@ -1293,6 +1510,7 @@ def render_asset_card(name, item, result):
             <div style="text-align:right;">
                 <div class="label">Current Price</div>
                 <div style="font-size:24px; font-weight:900;">{escape(format_price(ticker, result['price']))}</div>
+                <div style="font-size:11px; color:#6B7280; margin-top:4px;">{escape(str(result.get('price_source', '')))} / {escape(str(result.get('price_fetched_at', '')))}</div>
             </div>
         </div>
         <div class="explain-box">
@@ -1380,9 +1598,15 @@ st.sidebar.markdown("## Portfolio Settings")
 account_value = st.sidebar.number_input("총 운용자산 입력", min_value=0.0, value=10000000.0, step=100000.0)
 risk_per_trade_pct = st.sidebar.slider("한 종목당 허용 손실 비중", min_value=0.2, max_value=5.0, value=1.0, step=0.1)
 
-enable_autorefresh = st.sidebar.toggle("Auto Refresh 켜기", value=False, help="배포 환경에서 streamlit_autorefresh 오류가 나면 끄세요.")
+price_minute_bucket = int(time.time() // PRICE_DATA_REFRESH_SECONDS)
+
+enable_autorefresh = st.sidebar.toggle(
+    "가격 데이터 1분 자동 갱신 켜기",
+    value=False,
+    help="Streamlit 구조상 자동 갱신에는 rerun이 필요합니다. 기본값은 OFF이며, 상호작용/수동 새로고침 시 가격 데이터는 1분 캐시 기준으로 최신화됩니다."
+)
 if enable_autorefresh and st_autorefresh is not None:
-    st_autorefresh(interval=300000, key="datarefresh")
+    st_autorefresh(interval=PRICE_DATA_REFRESH_SECONDS * 1000, key="price_datarefresh")
 elif enable_autorefresh and st_autorefresh is None:
     st.sidebar.warning("streamlit_autorefresh를 불러오지 못했습니다. requirements.txt를 확인하세요.")
 
@@ -1405,7 +1629,7 @@ st.markdown("""
 <div class="sub-title">기술적 분석 + 상대강도 + 리스크 관리 + 포지션 사이징 + 매크로 + 뉴스 이벤트를 결합한 개인 투자 보조 터미널</div>
 """, unsafe_allow_html=True)
 
-st.caption("기존 JSON 저장 방식 대신 SQLite/Supabase 저장 구조를 사용합니다. Signal Score는 매수 확률이 아니라 의사결정 보조 점수입니다.")
+st.caption("기존 JSON 저장 방식 대신 SQLite/Supabase 저장 구조를 사용합니다. Signal Score는 매수 확률이 아니라 의사결정 보조 점수입니다. 현재가는 한국 주식은 네이버 현재가, 미국 주식/ETF는 yfinance 1분봉을 우선 사용합니다.")
 
 tab1, tab2, tab3, tab4 = st.tabs(["[1] Portfolio Strategy", "[2] Universe Screening", "[3] Macro & Qualitative", "[4] Settings / Data"])
 
@@ -1496,7 +1720,8 @@ with tab1:
                 target_weight=item.get("target_weight", 10.0),
                 avg_price=item.get("avg_price", 0.0),
                 quantity=item.get("quantity", 0.0),
-                include_news=True
+                include_news=True,
+                price_minute_bucket=price_minute_bucket
             )
         if result is None:
             st.warning(f"{name}({ticker}) 데이터를 불러오지 못했습니다.")
@@ -1504,8 +1729,10 @@ with tab1:
         results[name] = result
         portfolio_rows.append({
             "Asset": name, "Ticker": ticker, "Action": result["action"], "Signal Score": result["total_score"],
-            "Technical": result["technical_score"], "Relative": result["relative_score"], "Risk": result["risk_score"],
-            "Price": result["price"], "Qty": item.get("quantity", 0.0), "Market Value": result["market_value"],
+            "Technical": result["technical_score"], "Relative": result["relative_score"],
+            "Risk Quality": result["risk_score"], "Risk Level": 100 - result["risk_score"],
+            "Price": result["price"], "Price Source": result.get("price_source", ""),
+            "Qty": item.get("quantity", 0.0), "Market Value": result["market_value"],
             "P&L %": result["pnl_pct"], "Weight %": result["current_weight"]
         })
 
@@ -1520,7 +1747,8 @@ with tab1:
                 "Signal Score": st.column_config.ProgressColumn("Signal Score", min_value=0, max_value=100, format="%d"),
                 "Technical": st.column_config.ProgressColumn("Technical", min_value=0, max_value=100, format="%d"),
                 "Relative": st.column_config.ProgressColumn("Relative", min_value=0, max_value=100, format="%d"),
-                "Risk": st.column_config.ProgressColumn("Risk", min_value=0, max_value=100, format="%d")
+                "Risk Quality": st.column_config.ProgressColumn("Risk Quality", min_value=0, max_value=100, format="%d"),
+                "Risk Level": st.column_config.ProgressColumn("Risk Level", min_value=0, max_value=100, format="%d")
             }
         )
         st.markdown("---")
@@ -1569,14 +1797,17 @@ with tab2:
                 target_weight=10.0,
                 avg_price=0.0,
                 quantity=0.0,
-                include_news=False
+                include_news=False,
+                price_minute_bucket=price_minute_bucket
             )
             if result is None:
                 continue
             rows.append({
                 "Asset": name, "Ticker": ticker, "Action": result["action"], "Signal Score": result["total_score"],
-                "Technical": result["technical_score"], "Relative": result["relative_score"], "Risk": result["risk_score"],
-                "Macro": result["macro_score"], "Price": result["price"], "ATR %": result["row"]["ATR_Pct"],
+                "Technical": result["technical_score"], "Relative": result["relative_score"],
+                "Risk Quality": result["risk_score"], "Risk Level": 100 - result["risk_score"],
+                "Macro": result["macro_score"], "Price": result["price"], "Price Source": result.get("price_source", ""),
+                "ATR %": result["row"]["ATR_Pct"],
                 "RSI": result["row"]["RSI"], "20D RS": result["rs_detail"]["rs_20d"],
                 "60D RS": result["rs_detail"]["rs_60d"], "R/R": result["trade_plan"]["risk_reward"]
             })
@@ -1591,12 +1822,13 @@ with tab2:
                     "Signal Score": st.column_config.ProgressColumn("Signal Score", min_value=0, max_value=100, format="%d"),
                     "Technical": st.column_config.ProgressColumn("Technical", min_value=0, max_value=100, format="%d"),
                     "Relative": st.column_config.ProgressColumn("Relative", min_value=0, max_value=100, format="%d"),
-                    "Risk": st.column_config.ProgressColumn("Risk", min_value=0, max_value=100, format="%d"),
+                    "Risk Quality": st.column_config.ProgressColumn("Risk Quality", min_value=0, max_value=100, format="%d"),
+                    "Risk Level": st.column_config.ProgressColumn("Risk Level", min_value=0, max_value=100, format="%d"),
                     "Macro": st.column_config.ProgressColumn("Macro", min_value=0, max_value=100, format="%d")
                 }
             )
             st.markdown("#### Top Candidates")
-            st.dataframe(screen_df.head(15)[["Asset", "Ticker", "Action", "Signal Score", "Technical", "Relative", "Risk", "ATR %", "R/R"]], use_container_width=True, hide_index=True)
+            st.dataframe(screen_df.head(15)[["Asset", "Ticker", "Action", "Signal Score", "Technical", "Relative", "Risk Quality", "Risk Level", "ATR %", "R/R"]], use_container_width=True, hide_index=True)
         else:
             st.warning("스크리닝 결과가 없습니다. 티커나 데이터 소스를 확인하세요.")
 
@@ -1714,6 +1946,7 @@ plotly
 pandas
 numpy
 ta
+requests
 streamlit-autorefresh
 supabase
 google-genai
