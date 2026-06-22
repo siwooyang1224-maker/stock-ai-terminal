@@ -56,6 +56,32 @@ DB_PATH = Path("data") / "portfolio.db"
 # 일봉 OHLCV 히스토리는 기존처럼 캐시를 유지하고, 현재가만 별도 API로 최신화합니다.
 PRICE_DATA_REFRESH_SECONDS = 60
 
+# =========================================================
+# Risk-taking scoring profile
+# =========================================================
+# 사용자는 레버리지/고변동 종목을 적극적으로 다루는 성향이므로
+# Risk Quality가 최종 Signal Score를 과도하게 누르지 않도록 낮게 반영합니다.
+#
+# 기존: Technical 35% / Relative 20% / Risk 20% / News 15% / Macro 10%
+# 변경: Technical 40% / Relative 22% / Risk 10% / News 17% / Macro 11%
+# → Risk는 다른 평가 항목 평균 비중(22.5%)의 절반보다 약간 낮은 수준입니다.
+SCORE_WEIGHT_TECHNICAL = 0.40
+SCORE_WEIGHT_RELATIVE = 0.22
+SCORE_WEIGHT_RISK = 0.10
+SCORE_WEIGHT_QUALITATIVE = 0.17
+SCORE_WEIGHT_MACRO = 0.11
+
+# 백테스트용 단순 점수에서도 Risk의 영향력을 기존 25%에서 10%로 낮춥니다.
+BACKTEST_WEIGHT_TECHNICAL = 0.90
+BACKTEST_WEIGHT_RISK = 0.10
+
+# Risk-off 하드 게이트도 완화합니다.
+# 단, 극단적 변동성/초저 Risk Quality 구간은 여전히 방어적으로 처리합니다.
+RISK_OFF_SCORE_FLOOR = 20
+LEVERAGED_ATR_RISK_OFF_THRESHOLD = 10.0
+LEVERAGED_RISK_OFF_TOTAL_SCORE_FLOOR = 70
+
+
 DEFAULT_PORTFOLIO = {
     "SK하이닉스": {
         "ticker": "000660.KS",
@@ -1007,17 +1033,29 @@ def build_trade_plan(row, ticker, account_value, risk_per_trade_pct, target_weig
 
 
 def decide_action(total_score, risk_score, risk_reward, row, ticker, quantity):
+    """
+    Risk-taking profile용 액션 판단 로직.
+
+    변경 핵심:
+    1) Risk Quality가 낮다는 이유만으로 바로 RISK-OFF를 주던 기준을 완화했습니다.
+    2) 레버리지 ETF도 ATR 7%부터 과하게 막지 않고, ATR 10% 이상 + 점수 미달일 때만 강제 RISK-OFF로 봅니다.
+    3) 다만 Risk Quality가 20 미만인 극단 구간은 여전히 포지션 관리 우선입니다.
+    """
     below_ma200 = bool(row["Close"] < row["MA200"]) if not pd.isna(row["MA200"]) else False
-    if risk_score < 30:
-        return "RISK-OFF", "변동성과 낙폭 리스크가 커서 신규 진입보다 리스크 관리가 우선입니다."
-    if is_leveraged(ticker) and row["ATR_Pct"] >= 7 and total_score < 78:
-        return "RISK-OFF", "레버리지 ETF이고 변동성이 높아 신호가 아주 강하지 않으면 비중 확대는 위험합니다."
+    atr_pct = safe_float(row.get("ATR_Pct"), 0.0)
+
+    if risk_score < RISK_OFF_SCORE_FLOOR and total_score < 55:
+        return "RISK-OFF", "Risk Quality가 극단적으로 낮고 종합 신호도 강하지 않아 비중 관리가 우선입니다."
+
+    if is_leveraged(ticker) and atr_pct >= LEVERAGED_ATR_RISK_OFF_THRESHOLD and total_score < LEVERAGED_RISK_OFF_TOTAL_SCORE_FLOOR:
+        return "RISK-OFF", "레버리지 ETF이고 ATR 변동성이 매우 높아, 종합 신호가 충분히 강하지 않으면 비중 확대는 위험합니다."
+
     if total_score >= 78 and risk_reward >= 1.5 and not below_ma200:
         return "ADD", "추세, 상대강도, 손익비가 모두 양호하여 추가 매수 후보입니다."
     if total_score >= 68 and risk_reward >= 1.2:
-        return "ACCUMULATE", "방향성은 우호적이나 한 번에 진입하기보다 분할 접근이 적절합니다."
+        return "ACCUMULATE", "방향성은 우호적입니다. 고변동 종목은 분할 접근이 적절합니다."
     if total_score >= 55:
-        return "HOLD", "핵심 신호는 중립 이상입니다. 기존 보유는 가능하나 신규 비중 확대는 신중해야 합니다."
+        return "HOLD", "핵심 신호는 중립 이상입니다. 기존 보유는 가능하며 추가 진입은 손익비와 손절가를 함께 봐야 합니다."
     if total_score >= 45:
         return "WATCH", "방향성이 애매합니다. 지지선 접근 또는 거래량 동반 반전을 확인해야 합니다."
     if total_score >= 35:
@@ -1065,7 +1103,17 @@ def analyze_stock(ticker, account_value, risk_per_trade_pct, target_weight, avg_
     macro_score, macro_regime, macro_notes = get_macro_score(macro)
 
     technical_score = trend_score * 0.40 + momentum_score * 0.30 + volume_score * 0.30
-    total_score = clamp(technical_score * 0.35 + relative_score * 0.20 + risk_score * 0.20 + qualitative_score * 0.15 + macro_score * 0.10)
+
+    # Risk-taking profile:
+    # Risk Quality는 최종점수에서 10%만 반영합니다.
+    # 변동성을 감수하고 레버리지/고베타 종목을 다루는 사용자 성향에 맞춘 합산 방식입니다.
+    total_score = clamp(
+        technical_score * SCORE_WEIGHT_TECHNICAL
+        + relative_score * SCORE_WEIGHT_RELATIVE
+        + risk_score * SCORE_WEIGHT_RISK
+        + qualitative_score * SCORE_WEIGHT_QUALITATIVE
+        + macro_score * SCORE_WEIGHT_MACRO
+    )
 
     trade_plan = build_trade_plan(row, ticker, account_value, risk_per_trade_pct, target_weight, quantity)
     action, action_reason = decide_action(total_score, risk_score, safe_float(trade_plan["risk_reward"]), row, ticker, quantity)
@@ -1104,7 +1152,8 @@ def calculate_point_score_for_backtest(df, i, ticker):
     volume = get_volume_score(row, prev)
     risk = get_risk_score(row, ticker)
     technical = trend * 0.40 + momentum * 0.30 + volume * 0.30
-    return clamp(technical * 0.75 + risk * 0.25)
+    # 실전 Signal Score와 동일하게 백테스트에서도 Risk 영향력을 낮춥니다.
+    return clamp(technical * BACKTEST_WEIGHT_TECHNICAL + risk * BACKTEST_WEIGHT_RISK)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -1388,9 +1437,9 @@ def build_interpretation_memo(name, item, result):
     elif result["relative_score"] <= 40:
         cautions.append(f"벤치마크({result['benchmark']}) 대비 약한 흐름입니다.")
 
-    if result["risk_score"] <= 40:
-        cautions.append("Risk Quality가 낮아 변동성·낙폭 리스크가 큽니다. 비중 확대보다 손절선과 보유 비중을 먼저 봐야 합니다.")
-    elif result["risk_score"] >= 70:
+    if result["risk_score"] <= 30:
+        cautions.append("Risk Quality가 매우 낮습니다. 다만 최종점수 반영 비중은 10%로 낮췄으므로, 비중·손절선 중심으로만 참고하세요.")
+    elif result["risk_score"] >= 75:
         strengths.append("변동성/낙폭 기준 리스크 품질은 양호합니다.")
 
     if result["qualitative_score"] <= 40:
@@ -1630,7 +1679,7 @@ st.markdown("""
 <div class="sub-title">기술적 분석 + 상대강도 + 리스크 관리 + 포지션 사이징 + 매크로 + 뉴스 이벤트를 결합한 개인 투자 보조 터미널</div>
 """, unsafe_allow_html=True)
 
-st.caption("기존 JSON 저장 방식 대신 SQLite/Supabase 저장 구조를 사용합니다. Signal Score는 매수 확률이 아니라 의사결정 보조 점수입니다. 현재가는 한국 주식은 네이버 현재가, 미국 주식/ETF는 yfinance 1분봉을 우선 사용합니다.")
+st.caption("기존 JSON 저장 방식 대신 SQLite/Supabase 저장 구조를 사용합니다. Signal Score는 매수 확률이 아니라 의사결정 보조 점수입니다. 현재가는 한국 주식은 네이버 현재가, 미국 주식/ETF는 yfinance 1분봉을 우선 사용합니다. Risk-taking profile 적용: Risk Quality는 최종점수에 10%만 반영됩니다.")
 
 tab1, tab2, tab3, tab4 = st.tabs(["[1] Portfolio Strategy", "[2] Universe Screening", "[3] Macro & Qualitative", "[4] Settings / Data"])
 
@@ -1651,15 +1700,15 @@ with tab1:
 매수 확률이 아니라 기술적 지표, 시장 대비 상대강도, 리스크, 뉴스, 매크로를 합산한 의사결정 보조 점수입니다.  
 `70점 이상`은 우호적, `55–69점`은 중립 이상, `45–54점`은 애매, `45점 미만`은 보수적으로 해석합니다.
 
-**3) 세부 점수**  
-- **Technical**: 이동평균, MACD, RSI, 볼린저밴드, 거래량 기반 차트 상태입니다. 70 이상이면 차트는 우호적입니다.
-- **Relative**: 벤치마크 대비 상대강도입니다. 한국 주식은 KOSPI/KOSDAQ, 미국 주식은 SPY/QQQ/SOXX 등과 비교합니다. 높을수록 시장보다 강합니다.
-- **Risk Quality**: 변동성, ATR, 낙폭, 레버리지 여부를 반영한 안전도입니다. 높을수록 안전하고 낮을수록 비중 확대를 조심해야 합니다.
-- **News/Event**: 최근 뉴스 제목의 긍정/부정 키워드 기반 정성 점수입니다. 참고용이며 실제 공시와 실적을 함께 확인해야 합니다.
-- **Macro Fit**: VIX, 미국 10년물, 달러, QQQ, SOXX, HYG, 환율 등을 본 매크로 적합도입니다.
+**3) 세부 점수 및 가중치**  
+- **Technical 40%**: 이동평균, MACD, RSI, 볼린저밴드, 거래량 기반 차트 상태입니다. 70 이상이면 차트는 우호적입니다.
+- **Relative 22%**: 벤치마크 대비 상대강도입니다. 한국 주식은 KOSPI/KOSDAQ, 미국 주식은 SPY/QQQ/SOXX 등과 비교합니다. 높을수록 시장보다 강합니다.
+- **Risk Quality 10%**: 변동성, ATR, 낙폭, 레버리지 여부를 반영한 안전도입니다. 사용자가 risk-taking 성향이므로 최종점수에는 다른 평가 항목의 약 절반 수준만 반영합니다.
+- **News/Event 17%**: 최근 뉴스 제목의 긍정/부정 키워드 기반 정성 점수입니다. 참고용이며 실제 공시와 실적을 함께 확인해야 합니다.
+- **Macro Fit 11%**: VIX, 미국 10년물, 달러, QQQ, SOXX, HYG, 환율 등을 본 매크로 적합도입니다.
 
 **4) Trade Plan**  
-손절가, 목표가, 손익비, 추천 추가 수량을 함께 봐야 합니다. Signal Score가 높아도 손익비가 낮거나 Risk Quality가 낮으면 신규 매수는 신중하게 해석합니다.
+손절가, 목표가, 손익비, 추천 추가 수량을 함께 봐야 합니다. Signal Score가 높아도 손익비가 낮으면 무리하지 않고, Risk Quality가 낮을 때는 점수 자체보다 포지션 사이징과 손절가를 우선 확인합니다.
             """
         )
 
@@ -1771,7 +1820,7 @@ with tab1:
 # =========================================================
 with tab2:
     st.markdown("### Universe Screening: Korea 100 + US 100")
-    st.info("스크리닝에서는 속도를 위해 뉴스 정성 점수를 중립으로 두고, 기술적 점수·상대강도·리스크·매크로 적합도를 중심으로 봅니다.")
+    st.info("스크리닝에서는 속도를 위해 뉴스 정성 점수를 중립으로 두고, 기술적 점수·상대강도·리스크·매크로 적합도를 중심으로 봅니다. Risk-taking profile 적용으로 Risk Quality는 최종점수에 10%만 반영됩니다.")
 
     universe_type = st.radio("Universe", ["Korea 100", "US 100", "Custom"], horizontal=True)
     custom_tickers = ""
@@ -1955,5 +2004,5 @@ google-genai
 
     st.markdown("---")
     st.warning(
-        "이 앱은 투자 판단을 보조하는 도구입니다. Signal Score는 매수 확률이 아니며, 특히 TSLL, SOXL, TQQQ 같은 레버리지 ETF는 장기 보유 시 변동성 손실과 리밸런싱 디케이가 발생할 수 있으므로 포지션 사이징과 손절 기준을 반드시 함께 봐야 합니다."
+        "이 앱은 투자 판단을 보조하는 도구입니다. Signal Score는 매수 확률이 아닙니다. 현재 버전은 risk-taking profile로 Risk Quality 반영 비중을 10%로 낮췄습니다. 특히 TSLL, SOXL, TQQQ 같은 레버리지 ETF는 장기 보유 시 변동성 손실과 리밸런싱 디케이가 발생할 수 있으므로 포지션 사이징과 손절 기준은 반드시 함께 봐야 합니다."
     )
