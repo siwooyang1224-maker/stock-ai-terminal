@@ -75,11 +75,21 @@ SCORE_WEIGHT_MACRO = 0.11
 BACKTEST_WEIGHT_TECHNICAL = 0.90
 BACKTEST_WEIGHT_RISK = 0.10
 
-# Risk-off 하드 게이트도 완화합니다.
+# Risk-off 하드 게이트도 한 번 더 완화합니다.
 # 단, 극단적 변동성/초저 Risk Quality 구간은 여전히 방어적으로 처리합니다.
-RISK_OFF_SCORE_FLOOR = 20
-LEVERAGED_ATR_RISK_OFF_THRESHOLD = 10.0
-LEVERAGED_RISK_OFF_TOTAL_SCORE_FLOOR = 70
+RISK_OFF_SCORE_FLOOR = 15
+LEVERAGED_ATR_RISK_OFF_THRESHOLD = 12.0
+LEVERAGED_RISK_OFF_TOTAL_SCORE_FLOOR = 65
+
+# 액션 기준은 Risk-taking profile에 맞춰 살짝 느슨하게 둡니다.
+# 핵심 방향: ADD는 여전히 선별적으로, HOLD→ACCUMULATE / WATCH→HOLD 구간은 더 유연하게.
+ACTION_ADD_SCORE = 76
+ACTION_ADD_RR = 1.40
+ACTION_ACCUMULATE_SCORE = 65
+ACTION_ACCUMULATE_RR = 1.10
+ACTION_HOLD_SCORE = 50
+ACTION_WATCH_SCORE = 40
+ACTION_CAUTION_SCORE = 30
 
 
 DEFAULT_PORTFOLIO = {
@@ -1037,29 +1047,39 @@ def decide_action(total_score, risk_score, risk_reward, row, ticker, quantity):
     Risk-taking profile용 액션 판단 로직.
 
     변경 핵심:
-    1) Risk Quality가 낮다는 이유만으로 바로 RISK-OFF를 주던 기준을 완화했습니다.
-    2) 레버리지 ETF도 ATR 7%부터 과하게 막지 않고, ATR 10% 이상 + 점수 미달일 때만 강제 RISK-OFF로 봅니다.
-    3) 다만 Risk Quality가 20 미만인 극단 구간은 여전히 포지션 관리 우선입니다.
+    1) ADD는 너무 쉽게 나오지 않게 유지하되, 78점/1.5x → 76점/1.4x로만 소폭 완화했습니다.
+    2) ACCUMULATE는 68점/1.2x → 65점/1.1x로 완화해 분할진입 후보를 더 잘 잡습니다.
+    3) HOLD는 55점 → 50점으로 낮춰, 고변동 종목의 일시적 흔들림을 과도하게 매도 신호로 보지 않습니다.
+    4) WATCH/TRIM 경계도 45/35 → 40/30으로 낮춰, 변동성 큰 종목을 너무 빨리 AVOID 처리하지 않습니다.
+    5) 다만 극단적 Risk Quality와 레버리지 초고변동 구간은 여전히 RISK-OFF로 방어합니다.
     """
     below_ma200 = bool(row["Close"] < row["MA200"]) if not pd.isna(row["MA200"]) else False
     atr_pct = safe_float(row.get("ATR_Pct"), 0.0)
 
-    if risk_score < RISK_OFF_SCORE_FLOOR and total_score < 55:
-        return "RISK-OFF", "Risk Quality가 극단적으로 낮고 종합 신호도 강하지 않아 비중 관리가 우선입니다."
+    # 극단적 리스크 구간만 강제 RISK-OFF.
+    # 일반적인 고변동은 점수 합산에서 이미 Risk 10%로 낮게 반영됩니다.
+    if risk_score < RISK_OFF_SCORE_FLOOR and total_score < ACTION_HOLD_SCORE:
+        return "RISK-OFF", "Risk Quality가 극단적으로 낮고 종합 신호도 약해 비중 관리가 우선입니다."
 
+    # 레버리지 ETF는 ATR이 매우 높고 종합점수도 부족할 때만 강제 방어합니다.
     if is_leveraged(ticker) and atr_pct >= LEVERAGED_ATR_RISK_OFF_THRESHOLD and total_score < LEVERAGED_RISK_OFF_TOTAL_SCORE_FLOOR:
         return "RISK-OFF", "레버리지 ETF이고 ATR 변동성이 매우 높아, 종합 신호가 충분히 강하지 않으면 비중 확대는 위험합니다."
 
-    if total_score >= 78 and risk_reward >= 1.5 and not below_ma200:
+    if total_score >= ACTION_ADD_SCORE and risk_reward >= ACTION_ADD_RR and not below_ma200:
         return "ADD", "추세, 상대강도, 손익비가 모두 양호하여 추가 매수 후보입니다."
-    if total_score >= 68 and risk_reward >= 1.2:
-        return "ACCUMULATE", "방향성은 우호적입니다. 고변동 종목은 분할 접근이 적절합니다."
-    if total_score >= 55:
+
+    if total_score >= ACTION_ACCUMULATE_SCORE and risk_reward >= ACTION_ACCUMULATE_RR:
+        return "ACCUMULATE", "방향성은 우호적입니다. 고변동 종목은 한 번에 몰아 사기보다 분할 접근이 적절합니다."
+
+    if total_score >= ACTION_HOLD_SCORE:
         return "HOLD", "핵심 신호는 중립 이상입니다. 기존 보유는 가능하며 추가 진입은 손익비와 손절가를 함께 봐야 합니다."
-    if total_score >= 45:
-        return "WATCH", "방향성이 애매합니다. 지지선 접근 또는 거래량 동반 반전을 확인해야 합니다."
-    if total_score >= 35:
-        return ("TRIM", "기술적·상대강도 신호가 약해 일부 비중 축소를 검토할 구간입니다.") if quantity > 0 else ("AVOID", "신규 진입 매력도가 낮습니다.")
+
+    if total_score >= ACTION_WATCH_SCORE:
+        return "WATCH", "방향성이 아직 애매합니다. 지지선 접근 또는 거래량 동반 반전을 확인해야 합니다."
+
+    if total_score >= ACTION_CAUTION_SCORE:
+        return ("TRIM", "신호가 약해 일부 비중 축소를 검토할 구간입니다.") if quantity > 0 else ("AVOID", "신규 진입 매력도가 낮습니다.")
+
     return ("TRIM", "하락 신호가 우세합니다. 손절 기준과 비중 축소를 우선 검토해야 합니다.") if quantity > 0 else ("AVOID", "하락 신호가 강해 신규 진입을 피하는 것이 적절합니다.")
 
 
@@ -1174,7 +1194,8 @@ def backtest_technical_signal(ticker, horizon=20):
     bt = pd.DataFrame(records)
     if bt.empty:
         return None
-    high_signal, low_signal = bt[bt["score"] >= 70], bt[bt["score"] <= 35]
+    # Risk-taking profile에서는 65점 이상을 의미 있는 우호 신호, 30점 이하를 약세 신호로 봅니다.
+    high_signal, low_signal = bt[bt["score"] >= ACTION_ACCUMULATE_SCORE], bt[bt["score"] <= ACTION_CAUTION_SCORE]
     return {
         "sample_size": len(bt), "high_count": len(high_signal), "low_count": len(low_signal),
         "high_avg_ret": high_signal["fwd_ret"].mean() if len(high_signal) > 0 else np.nan,
@@ -1394,15 +1415,15 @@ def build_factor_interpretation_table(result):
 def classify_score_band(score):
     """점수를 사용자가 바로 읽을 수 있는 해석 구간으로 변환합니다."""
     score = clamp(score)
-    if score >= 75:
+    if score >= ACTION_ADD_SCORE:
         return "강한 우호", "핵심 신호가 매우 좋습니다. 다만 과열 여부와 손익비를 함께 확인해야 합니다."
-    if score >= 65:
-        return "우호", "매수 후보로 볼 수 있지만 분할 진입과 손절 기준이 필요합니다."
-    if score >= 55:
-        return "중립 이상", "기존 보유는 가능하지만 신규 비중 확대는 신중한 구간입니다."
-    if score >= 45:
+    if score >= ACTION_ACCUMULATE_SCORE:
+        return "우호", "분할매수 후보로 볼 수 있습니다. 손절 기준과 진입 단가를 함께 봐야 합니다."
+    if score >= ACTION_HOLD_SCORE:
+        return "중립 이상", "기존 보유는 가능하지만 신규 비중 확대는 손익비와 거래량 확인 후 판단하는 구간입니다."
+    if score >= ACTION_WATCH_SCORE:
         return "애매", "방향성이 뚜렷하지 않습니다. 가격·거래량 확인 후 판단하는 편이 좋습니다."
-    if score >= 35:
+    if score >= ACTION_CAUTION_SCORE:
         return "주의", "신호가 약합니다. 기존 보유자는 비중과 손절선을 먼저 점검해야 합니다."
     return "위험", "하락/리스크 신호가 강합니다. 신규 진입은 피하고 리스크 관리가 우선입니다."
 
@@ -1620,7 +1641,7 @@ def render_asset_card(name, item, result):
         b2.metric("강한 신호 횟수", f"{bt['high_count']:,}")
         b3.metric("강한 신호 후 20D 평균", f"{safe_float(bt['high_avg_ret']):.2f}%")
         b4.metric("강한 신호 후 상승 비율", f"{safe_float(bt['high_hit_rate']):.1f}%")
-        st.caption("백테스트는 기술적 점수만 단순 검증한 참고용입니다. 뉴스, 실적, 매크로, 슬리피지, 세금, 환율은 반영하지 않습니다.")
+        st.caption("백테스트는 기술적 점수만 단순 검증한 참고용입니다. Risk-taking 기준에 맞춰 65점 이상을 강한 신호로 봅니다. 뉴스, 실적, 매크로, 슬리피지, 세금, 환율은 반영하지 않습니다.")
 
     st.plotly_chart(make_stock_chart(result), use_container_width=True)
 
@@ -1698,7 +1719,7 @@ with tab1:
 
 **2) Signal Score**  
 매수 확률이 아니라 기술적 지표, 시장 대비 상대강도, 리스크, 뉴스, 매크로를 합산한 의사결정 보조 점수입니다.  
-`70점 이상`은 우호적, `55–69점`은 중립 이상, `45–54점`은 애매, `45점 미만`은 보수적으로 해석합니다.
+Risk-taking 기준에서는 `76점 이상`은 강한 우호, `65–75점`은 분할매수 후보, `50–64점`은 보유 가능, `40–49점`은 관망, `40점 미만`은 보수적으로 해석합니다.
 
 **3) 세부 점수 및 가중치**  
 - **Technical 40%**: 이동평균, MACD, RSI, 볼린저밴드, 거래량 기반 차트 상태입니다. 70 이상이면 차트는 우호적입니다.
